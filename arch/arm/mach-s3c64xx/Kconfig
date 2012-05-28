@@ -229,6 +229,33 @@ config SMDK6410_WM1192_EV1
 	  detected at runtime so the resulting kernel can be used
 	  with or without the 1192-EV1 fitted.
 
+config MACH_OK6410
+	bool "OK6410"
+	select CPU_S3C6410
+	select SAMSUNG_DEV_ADC
+	select S3C_DEV_HSMMC
+	select S3C_DEV_HSMMC1
+	select S3C_DEV_I2C1
+	select SAMSUNG_DEV_IDE
+	select S3C_DEV_FB
+	select S3C_DEV_RTC
+	select SAMSUNG_DEV_TS
+	select S3C_DEV_USB_HOST
+	select S3C_DEV_USB_HSOTG
+	select S3C_DEV_WDT
+	select SAMSUNG_DEV_BACKLIGHT
+	select SAMSUNG_DEV_KEYPAD
+	select SAMSUNG_DEV_PWM
+	select HAVE_S3C2410_WATCHDOG if WATCHDOG
+	select S3C64XX_SETUP_SDHCI
+	select S3C64XX_SETUP_I2C1
+	select S3C64XX_SETUP_IDE
+	select S3C64XX_SETUP_FB_24BPP
+	select S3C64XX_SETUP_KEYPAD
+	select S3C64XX_SETUP_USB_PHY
+	help
+	  Machine support for the FL OK6410 development board
+
 config MACH_NCP
 	bool "NCP"
 	select CPU_S3C6410
