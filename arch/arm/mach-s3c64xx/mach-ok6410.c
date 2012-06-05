@@ -319,6 +319,7 @@ static struct platform_device *ok6410_devices[] __initdata = {
 #endif
 	&ok6410_lcd_powerdev,
 
+	&s3c_device_nand,
 	&ok6410_smsc911x,
 	&s3c_device_adc,
 	&s3c_device_cfcon,
