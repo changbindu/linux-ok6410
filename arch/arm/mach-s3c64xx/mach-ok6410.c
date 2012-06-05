@@ -111,6 +111,41 @@ static struct s3c2410_uartcfg ok6410_uartcfgs[] __initdata = {
 	},
 };
 
+static struct mtd_partition ok6410_nand_part[] = {
+	[0] = {
+		.name	= "uboot",
+		.size	= SZ_1M,
+		.offset	= 0,
+	},
+	[1] = {
+		.name	= "kernel",
+		.size	= 5 * SZ_1M,
+		.offset	= SZ_1M,
+	},
+	[2] = {
+		.name	= "rootfs",
+		.size	= MTDPART_SIZ_FULL,
+		.offset	= 6 * SZ_1M,
+	},
+};
+
+static struct s3c2410_nand_set ok6410_nand_sets[] = {
+	[0] = {
+		.name		= "nand",
+		.nr_chips	= 1,
+		.nr_partitions	= ARRAY_SIZE(ok6410_nand_part),
+		.partitions	= ok6410_nand_part,
+	},
+};
+
+static struct s3c2410_platform_nand ok6410_nand_info = {
+	.tacls		= 25,
+	.twrph0		= 55,
+	.twrph1		= 40,
+	.nr_sets	= ARRAY_SIZE(ok6410_nand_sets),
+	.sets		= ok6410_nand_sets,
+};
+
 /* framebuffer and LCD setup. */
 
 /* GPF15 = LCD backlight control
@@ -659,6 +694,7 @@ static void __init ok6410_machine_init(void)
 
 	samsung_keypad_set_platdata(&ok6410_keypad_data);
 
+	s3c_nand_set_platdata(&ok6410_nand_info);
 	s3c24xx_ts_set_platdata(NULL);
 
 	/* configure nCS1 width to 16 bits */
