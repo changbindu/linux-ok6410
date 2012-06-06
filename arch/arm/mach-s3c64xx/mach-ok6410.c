@@ -152,6 +152,45 @@ static struct s3c2410_platform_nand ok6410_nand_info = {
 	.sets		= ok6410_nand_sets,
 };
 
+#ifdef CONFIG_DM9000
+
+#define S3C64XX_PA_DM9000	(0x18000000)
+#define S3C64XX_SZ_DM9000	SZ_1M
+#define S3C64XX_VA_DM9000	S3C_ADDR(0x03b00300)
+static struct resource dm9000_resources[] = {
+	[0] = {
+		.start		= S3C64XX_PA_DM9000,
+		.end		= S3C64XX_PA_DM9000 + 3,
+		.flags		= IORESOURCE_MEM,
+	},
+	[1] = {
+		.start		= S3C64XX_PA_DM9000 + 4,
+		.end		= S3C64XX_PA_DM9000 + S3C64XX_SZ_DM9000 - 1, 
+		.flags		= IORESOURCE_MEM,
+	},
+	[2] = {
+		.start		= IRQ_EINT(7),
+		.end		= IRQ_EINT(7),
+		.flags		= IORESOURCE_IRQ | IRQF_TRIGGER_HIGH,
+	},
+};
+
+static struct dm9000_plat_data dm9000_setup = {
+	.flags			= DM9000_PLATF_16BITONLY,
+	.dev_addr		= { 0x08, 0x90, 0x00, 0xa0, 0x90, 0x90 },
+};
+
+static struct platform_device s3c_device_dm9000 = {
+	.name			= "dm9000",
+	.id			= 0,
+	.num_resources	= ARRAY_SIZE(dm9000_resources),
+	.resource		= dm9000_resources,
+	.dev			= {
+		.platform_data = &dm9000_setup,
+	}
+};
+#endif
+
 /* framebuffer and LCD setup. */
 
 /* GPF15 = LCD backlight control
@@ -323,6 +362,9 @@ static struct platform_device *ok6410_devices[] __initdata = {
 	&ok6410_lcd_powerdev,
 
 	&s3c_device_nand,
+#ifdef CONFIG_DM9000
+	&s3c_device_dm9000,
+#endif
 	&ok6410_smsc911x,
 	&s3c_device_adc,
 	&s3c_device_cfcon,
