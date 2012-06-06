@@ -96,6 +96,7 @@ obj-$(CONFIG_HPFS_FS)		+= hpfs/
 obj-$(CONFIG_NTFS_FS)		+= ntfs/
 obj-$(CONFIG_UFS_FS)		+= ufs/
 obj-$(CONFIG_EFS_FS)		+= efs/
+obj-$(CONFIG_YAFFS_FS)		+= yaffs2/
 obj-$(CONFIG_JFFS2_FS)		+= jffs2/
 obj-$(CONFIG_LOGFS)		+= logfs/
 obj-$(CONFIG_UBIFS_FS)		+= ubifs/
