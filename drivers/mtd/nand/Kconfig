@@ -211,7 +211,7 @@ config MTD_NAND_S3C2410_HWECC
 	  software ECC is preferable.
 
 config MTD_NAND_S3C
-	tristate "NAND support for Samsung S3C"
+	tristate "NAND support for Samsung S3C64XX, S5P64XX, S5PC1XX"
 	depends on (ARCH_S3C64XX || ARCH_S5P64XX || ARCH_S5PC1XX) && MTD_NAND
 	help
 	  This enables the NAND flash controller on the S3C
