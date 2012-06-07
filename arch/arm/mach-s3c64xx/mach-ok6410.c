@@ -191,6 +191,38 @@ static struct platform_device s3c_device_dm9000 = {
 };
 #endif
 
+static struct gpio_led ok6410_leds[] = {
+	[0]= {
+		.name = "LED1",
+		.gpio = S3C64XX_GPM(0),
+	},
+	[1]= {
+		.name = "LED2",
+		.gpio = S3C64XX_GPM(1),
+	},
+	[2]= {
+		.name = "LED3",
+		.gpio = S3C64XX_GPM(2),
+	},
+	[3]= {
+		.name = "LED4",
+		.gpio = S3C64XX_GPM(3),
+	},
+};
+
+static struct gpio_led_platform_data ok6410_gpio_led_pdata = {
+	.num_leds	= ARRAY_SIZE(ok6410_leds),
+	.leds		=ok6410_leds,
+};
+
+static struct platform_device ok6410_device_led = {
+	.name	= "leds-gpio",
+	.id	= -1,
+	.dev	= {
+		.platform_data = &ok6410_gpio_led_pdata,
+	},
+};
+
 /* framebuffer and LCD setup. */
 
 /* GPF15 = LCD backlight control
@@ -354,6 +386,7 @@ static struct platform_device *ok6410_devices[] __initdata = {
 	&s3c_device_usb_hsotg,
 	&samsung_asoc_dma,
 	&s3c64xx_device_iisv4,
+	&ok6410_device_led,
 	&samsung_device_keypad,
 
 #ifdef CONFIG_REGULATOR
