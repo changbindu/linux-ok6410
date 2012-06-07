@@ -26,14 +26,16 @@ then
 fi
 
 mkdir -p $O
+echo -e "OK!\n"
 
 echo "availabe commands:"
-echo "	mk"
-echo "	mk_defconfig"
-echo "	mk_menuconfig"
-echo "	mk_uImage"
-echo "	mk_check"
-echo "	mk_clean"
+echo "	mk		- excute make with apropriate variables set"
+echo "	mk_defconfig	- load default kernel config"
+echo "	mk_menuconfig	- enter menuconfig"
+echo "	mk_uImage	- build kernel to U-Boot image"
+echo "	mk_check	- check source"
+echo "	mk_clean	- clean files built"
+echo "	dnw_uImage	- download uImage to board via dnw tool"
 
 mk()
 {
@@ -82,4 +84,9 @@ mk_check()
 	mk headers_check
 	echo "sparse all c source"
 	mk "C=2"
+}
+
+dnw_uImage()
+{
+	dnw $O/uImage
 }
