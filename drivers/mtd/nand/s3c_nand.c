@@ -979,7 +979,7 @@ void s3c_nand_write_page_8bit(struct mtd_info *mtd, struct nand_chip *chip,
 	int eccbytes = 13;
 	int eccsteps = mtd->writesize / eccsize;
 	uint8_t *ecc_calc = chip->buffers->ecccalc;
-	uint8_t *p = buf;
+	const uint8_t *p = buf;
 	uint32_t *mecc_pos = chip->ecc.layout->eccpos;
 
 	for (i = 0; eccsteps; eccsteps--, i += eccbytes, p += eccsize) {
@@ -1263,7 +1263,9 @@ static int s3c_nand_probe(struct platform_device *pdev, enum s3c_cpu_type cpu_ty
 		}
 
 		/* Register the partitions */
-		add_mtd_partitions(s3c_mtd, sets->partitions, sets->nr_partitions);
+		mtd_device_parse_register(s3c_mtd,
+					NULL, NULL,
+					sets->partitions, sets->nr_partitions);
 	}
 
 	pr_debug("initialized ok\n");
@@ -1300,14 +1302,14 @@ static int s5pc100_nand_probe(struct platform_device *dev)
 #if defined(CONFIG_PM)
 static int s3c_nand_suspend(struct platform_device *dev, pm_message_t pm)
 {
-        struct s3c_nand *info = platform_get_drvdata(dev);
+        //struct s3c_nand *info = platform_get_drvdata(dev);
         clk_disable(s3c_nand.clk);
 	return 0;
 }
 
 static int s3c_nand_resume(struct platform_device *dev)
 {
-        struct s3c_nand *info = platform_get_drvdata(dev);
+        //struct s3c_nand *info = platform_get_drvdata(dev);
         clk_enable(s3c_nand.clk);
 	return 0;
 }
