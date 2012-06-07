@@ -73,6 +73,7 @@
 #include <plat/adc.h>
 #include <plat/ts.h>
 #include <plat/keypad.h>
+#include <linux/gpio_keys.h>
 #include <plat/backlight.h>
 #include <plat/regs-fb-v4.h>
 #include <plat/nand.h>
@@ -221,6 +222,66 @@ static struct platform_device ok6410_device_led = {
 	.dev	= {
 		.platform_data = &ok6410_gpio_led_pdata,
 	},
+};
+
+/* gpio buttons */
+static struct gpio_keys_button gpio_buttons[] = {
+	{
+		.gpio		= S3C64XX_GPN(0),
+		.code		= KEY_UP,
+		.desc		= "BUTTON1",
+		.active_low	= 1,
+		.wakeup		= 0,
+	},
+	{
+		.gpio		= S3C64XX_GPN(1),
+		.code		= KEY_DOWN,
+		.desc		= "BUTTON2",
+		.active_low	= 1,
+		.wakeup		= 0,
+	},
+	{
+		.gpio		= S3C64XX_GPN(2),
+		.code		= KEY_LEFT,
+		.desc		= "BUTTON3",
+		.active_low	= 1,
+		.wakeup		= 0,
+	},
+	{
+		.gpio		= S3C64XX_GPN(3),
+		.code		= KEY_RIGHT,
+		.desc		= "BUTTON4",
+		.active_low	= 1,
+		.wakeup		= 0,
+	},
+	{
+		.gpio		= S3C64XX_GPN(4),
+		.code		= KEY_ENTER,
+		.desc		= "BUTTON5",
+		.active_low	= 1,
+		.wakeup		= 0,
+	},
+	{
+		.gpio		= S3C64XX_GPN(5),
+		.code		= KEY_ESC,
+		.desc		= "BUTTON6",
+		.active_low	= 1,
+		.wakeup		= 0,
+	}
+};
+
+static struct gpio_keys_platform_data gpio_button_data = {
+	.buttons	= gpio_buttons,
+	.nbuttons	= ARRAY_SIZE(gpio_buttons),
+};
+
+static struct platform_device ok6410_gpio_button_device = {
+	.name		= "gpio-keys",
+	.id		= -1,
+	.num_resources	= 0,
+	.dev		= {
+		.platform_data	= &gpio_button_data,
+	}
 };
 
 /* framebuffer and LCD setup. */
@@ -387,6 +448,7 @@ static struct platform_device *ok6410_devices[] __initdata = {
 	&samsung_asoc_dma,
 	&s3c64xx_device_iisv4,
 	&ok6410_device_led,
+	&ok6410_gpio_button_device,
 	&samsung_device_keypad,
 
 #ifdef CONFIG_REGULATOR
