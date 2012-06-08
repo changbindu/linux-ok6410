@@ -132,7 +132,6 @@ static struct mtd_partition ok6410_nand_part[] = {
 		.name		= "rootfs",
 		.size		= MTDPART_SIZ_FULL,
 		.offset		= MTDPART_OFS_APPEND,
-		.mask_flags	= MTD_CAP_NANDFLASH,
 	},
 };
 
