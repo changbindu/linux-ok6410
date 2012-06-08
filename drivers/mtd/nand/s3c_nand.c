@@ -147,7 +147,7 @@ static struct nand_ecclayout s3c_nand_oob_mlc_64 = {
 		 .length = 28}}
 };
 
-
+#if 0
 static struct nand_ecclayout s3c_nand_oob_mlc_128_4bit = {
 	.eccbytes = 64,
 	.eccpos = {
@@ -162,6 +162,7 @@ static struct nand_ecclayout s3c_nand_oob_mlc_128_4bit = {
 		{.offset = 2,
 		 .length = 60}}
 };
+#endif
 
 
 static struct nand_ecclayout s3c_nand_oob_mlc_128_8bit = {
@@ -183,6 +184,7 @@ static struct nand_ecclayout s3c_nand_oob_mlc_128_8bit = {
 		 .length = 20}}
 };
 
+#if 0
 // samsung  K9GAG08U0D  MLC nand flash  oob size =218 Byte
 static struct nand_ecclayout s3c_nand_oob_mlc_218_8bit = {
 	.eccbytes = 104,
@@ -202,9 +204,7 @@ static struct nand_ecclayout s3c_nand_oob_mlc_218_8bit = {
 		{.offset = 2,
 		 .length = 110}}
 };
-
-
-
+#endif
 
 #endif
 
@@ -423,9 +423,10 @@ static void s3c_nand_enable_hwecc(struct mtd_info *mtd, int mode)
  */
 static int s3c_nand_calculate_ecc(struct mtd_info *mtd, const u_char *dat, u_char *ecc_code)
 {
-	u_long nfcont, nfmecc0, nfmecc1, nfm8ecc0, nfm8ecc1, nfm8ecc2, nfm8ecc3;;
-	void __iomem *regs = s3c_nand.regs;
+	u_long nfcont, nfmecc0, nfmecc1, nfm8ecc0, nfm8ecc1, nfm8ecc2, nfm8ecc3;
+	void __iomem *regs;
 
+	regs = s3c_nand.regs;
 	/* Lock */
 	nfcont = readl(regs + S3C_NFCONT);
 	nfcont |= S3C_NFCONT_MECCLOCK;
@@ -729,7 +730,7 @@ static void s3c_nand_write_page_1bit(struct mtd_info *mtd, struct nand_chip *chi
 }
 
 static int s3c_nand_read_page_1bit(struct mtd_info *mtd, struct nand_chip *chip,
-				uint8_t *buf)
+				uint8_t *buf, int page)
 {
 	int i, stat, eccsize = chip->ecc.size;
 	int eccbytes = chip->ecc.bytes;
@@ -777,7 +778,7 @@ static int s3c_nand_read_page_1bit(struct mtd_info *mtd, struct nand_chip *chip,
  * Written by jsgood
  */
 static int s3c_nand_read_page_4bit(struct mtd_info *mtd, struct nand_chip *chip,
-				uint8_t *buf)
+				uint8_t *buf, int page)
 {
 	int i, stat, eccsize = chip->ecc.size;
 	int eccbytes = chip->ecc.bytes;
@@ -996,7 +997,7 @@ void s3c_nand_write_page_8bit(struct mtd_info *mtd, struct nand_chip *chip,
 
 
 int s3c_nand_read_page_8bit(struct mtd_info *mtd, struct nand_chip *chip,
-				uint8_t *buf)
+				uint8_t *buf, int page)
 {
 	int i, stat, eccsize = 512;
 	int eccbytes = 13;
@@ -1188,8 +1189,7 @@ static int s3c_nand_probe(struct platform_device *pdev, enum s3c_cpu_type cpu_ty
 				nand->ecc.size = 512;
 				nand->ecc.bytes	= 4;
 
-				if ((1024 << (tmp & 0x3)) > 512) 
-                                {
+				if ((1024 << (tmp & 0x3)) > 512) {
 					nand->ecc.read_page = s3c_nand_read_page_1bit;
 					nand->ecc.write_page = s3c_nand_write_page_1bit;
 					nand->ecc.read_oob = s3c_nand_read_oob_1bit;
