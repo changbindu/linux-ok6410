@@ -139,6 +139,7 @@ static struct s3c2410_nand_set ok6410_nand_sets[] = {
 	[0] = {
 		.name		= "nand",
 		.nr_chips	= 1,
+		.disable_ecc = 1,
 		.nr_partitions	= ARRAY_SIZE(ok6410_nand_part),
 		.partitions	= ok6410_nand_part,
 	},
