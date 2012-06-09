@@ -1116,6 +1116,9 @@ static struct platform_device_id s3c24xx_driver_ids[] = {
 	}, {
 		.name		= "s3c6400-nand",
 		.driver_data	= TYPE_S3C2412, /* compatible with 2412 */
+	}, {
+		.name		= "s3c6410-nand",
+		.driver_data	= TYPE_S3C2412, /* compatible with 2412 */
 	},
 	{ }
 };

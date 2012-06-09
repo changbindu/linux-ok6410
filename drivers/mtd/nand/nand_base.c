@@ -3262,6 +3262,10 @@ int nand_scan_tail(struct mtd_info *mtd)
 		case 128:
 			chip->ecc.layout = &nand_oob_128;
 			break;
+		/* workaround for ok6410 2G nand flash */
+		case 218:
+			chip->ecc.layout = &nand_oob_128;
+			break;
 		default:
 			pr_warn("No oob scheme defined for oobsize %d\n",
 				   mtd->oobsize);
