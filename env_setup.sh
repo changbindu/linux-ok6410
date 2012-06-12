@@ -6,6 +6,7 @@ JOBS=4
 export KERNELDIR=`pwd`
 export ARCH=arm
 export O=~/build/linux
+export INSTALL_MOD_PATH=$O/modules
 export CROSS_COMPILE=arm-linux-gnueabi-
 export BOARD="ok6410"
 export defconfig="ok6410_defconfig"
@@ -14,6 +15,7 @@ echo "KERNELDIR=$KERNELDIR"
 echo "JOBS=$JOBS"
 echo "ARCH=$ARCH"
 echo "O=$O"
+echo "INSTALL_MOD_PATH=$INSTALL_MOD_PATH"
 echo "CROSS_COMPILE=$CROSS_COMPILE"
 echo "BOARD=$BOARD"
 echo "defconfig=$defconfig"
@@ -30,11 +32,13 @@ echo -e "OK!\n"
 
 echo "availabe commands:"
 echo "	mk		- excute make with apropriate variables set"
+echo "	mm		- build modules in current directory"
 echo "	mk_defconfig	- load default kernel config"
 echo "	mk_menuconfig	- enter menuconfig"
 echo "	mk_uImage	- build kernel to U-Boot image"
 echo "	mk_check	- check source"
 echo "	mk_clean	- clean files built"
+echo "	mk_modules_install - install buit modules to 'INSTALL_MOD_PATH'"
 echo "	dnw_uImage	- download uImage to board via dnw tool"
 
 mk()
@@ -84,6 +88,11 @@ mk_check()
 	mk headers_check
 	echo "sparse all c source"
 	mk "C=2"
+}
+
+mk_modules_install()
+{
+	mk modules_install
 }
 
 dnw_uImage()
