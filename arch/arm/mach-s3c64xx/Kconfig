@@ -256,6 +256,57 @@ config MACH_OK6410
 	help
 	  Machine support for the FL OK6410 development board
 
+choice
+	depends on FB_S3C
+	prompt "Select LCD Type"
+	default FB_S3C_TFT480272
+
+config FB_S3C_TFT480272
+		boolean "4.3 inch 480x272 TFT LCD"
+		help
+		  4.3 inch 480x272 TFT LCD
+
+config FB_S3C_TFT800480
+		boolean "7 inch 800x480 TFT LCD"
+		help
+		  7 inch 800x480 TFT LCD
+
+config FB_S3C_T240320
+		boolean "3.5 inch 240X320 Toppoly LCD"
+		help
+		  3.5 inch 240X320 Toppoly LCD
+
+config FB_S3C_X240320
+		boolean "3.5 inch 240X320 LCD(ACX502BMU)"
+		help
+		  3.5 inch 240X320 LCD(ACX502BMU)
+
+config FB_S3C_TFT640480
+		boolean "8 inch 640X480 L80 LCD"
+		help
+		  8 inch 640X480 LCD
+
+config FB_S3C_VGA1024768
+		boolean "VGA 1024x768"
+		help
+		  VGA 1024x768
+
+config FB_S3C_VGA800600
+		boolean "VGA 800x600"
+		help
+		  VGA 800x600
+
+config FB_S3C_VGA640480
+		boolean "VGA 640x480"
+		help
+		  VGA 640x480
+
+config FB_S3C_EZVGA800600
+		boolean "EZVGA 800x600"
+		help
+		  EZVGA 800x600
+endchoice
+
 config MACH_NCP
 	bool "NCP"
 	select CPU_S3C6410

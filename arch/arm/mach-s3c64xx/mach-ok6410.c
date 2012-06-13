@@ -319,21 +319,124 @@ static struct platform_device ok6410_lcd_powerdev = {
 };
 
 static struct s3c_fb_pd_win ok6410_fb_win0 = {
-	/* this is to ensure we use win0 */
-	.win_mode	= {
-		.left_margin	= 8,
-		.right_margin	= 13,
-		.upper_margin	= 7,
-		.lower_margin	= 5,
-		.hsync_len	= 3,
-		.vsync_len	= 1,
+/* this is to ensure we use win0 */
+#ifdef CONFIG_FB_S3C_TFT480272
+/* 4.3 inch 480x272 TFT LCD */
+	.win_mode = {
+		.left_margin	= 2, /* horizon back porch(thb) */
+		.right_margin	= 2, /* horizon front porch(thf) */
+		.upper_margin	= 2, /* vertical back porch(tvb) */
+		.lower_margin	= 2, /* vertical front porch(tvf) */
+		.hsync_len	= 41, /* horizon pulse width(thp) */
+		.vsync_len	= 10, /* vertical pulse width(tvp) */
+		.xres		= 480, /* horizon pixel  x resolition(thd) */
+		.yres		= 272, /* line cnt       y resolution(tvd) */
+	},
+	.max_bpp	= 32, /* max bits per pixel */
+	.default_bpp	= 16,
+	.virtual_y	= 480 * 2,
+	.virtual_x	= 272,
+#elif defined(CONFIG_FB_S3C_TFT800480)
+/* 7 inch 800x480 TFT LCD */
+	.win_mode = {
+		.left_margin	= 40,
+		.right_margin	= 40,
+		.upper_margin	= 29,
+		.lower_margin	= 13,
+		.hsync_len	= 48,
+		.vsync_len	= 3,
 		.xres		= 800,
 		.yres		= 480,
 	},
 	.max_bpp	= 32,
 	.default_bpp	= 16,
-	.virtual_y	= 480 * 2,
-	.virtual_x	= 800,
+	.virtual_y	= 800 * 2,
+	.virtual_x	= 480,
+#elif defined(CONFIG_FB_S3C_T240320)
+/* 3.5 inch 240X320 Toppoly LCD */
+	.win_mode = {
+		.left_margin	= 68,
+		.right_margin	= 40,
+		.upper_margin	= 18,
+		.lower_margin	= 5,
+		.hsync_len	= 48,
+		.vsync_len	= 15,
+		.xres		= 320,
+		.yres		= 240,
+	},
+	.max_bpp	= 32,
+	.default_bpp	= 16,
+	.virtual_y	= 320 * 2,
+	.virtual_x	= 240,
+#elif defined(CONFIG_FB_S3C_X240320)
+/* 3.5 inch 240X320 LCD(ACX502BMU) */
+	.win_mode = {
+		.left_margin	= 68,
+		.right_margin	= 40,
+		.upper_margin	= 18,
+		.lower_margin	= 5,
+		.hsync_len	= 48,
+		.vsync_len	= 15,
+		.xres		= 320,
+		.yres		= 240,
+	},
+	.max_bpp	= 32,
+	.default_bpp	= 16,
+	.virtual_y	= 320 * 2,
+	.virtual_x	= 240,
+#elif defined(CONFIG_FB_S3C_TFT640480)
+/* 8 inch 640X480 L80 LCD */
+	.win_mode = {
+		.left_margin	= 73,
+		.right_margin	= 55,
+		.upper_margin	= 32,
+		.lower_margin	= 36,
+		.hsync_len	= 119,
+		.vsync_len	= 5,
+		.xres		= 800,
+		.yres		= 600,
+	},
+	.max_bpp	= 32,
+	.default_bpp	= 16,
+	.virtual_y	= 800 * 2,
+	.virtual_x	= 600,
+#elif defined(CONFIG_FB_S3C_VGA1024768)
+/* VGA 1024x768 */
+	.win_mode = {
+		.left_margin	= 40,
+		.right_margin	= 40,
+		.upper_margin	= 32,
+		.lower_margin	= 36,
+		.hsync_len	= 119,
+		.vsync_len	= 5,
+		.xres		= 1024,
+		.yres		= 768,
+	},
+	.max_bpp	= 32,
+	.default_bpp	= 16,
+	.virtual_y	= 1024 * 2,
+	.virtual_x	= 768,
+#elif defined(CONFIG_FB_S3C_VGA800600)
+/* VGA 800x600 */
+#elif defined(CONFIG_FB_S3C_VGA640480)
+/* VGA 640x480 */
+#elif defined(CONFIG_FB_S3C_EZVGA800600)
+/* EZVGA 800x600 */
+	.win_mode = {
+		.left_margin	= 73,
+		.right_margin	= 55,
+		.upper_margin	= 32,
+		.lower_margin	= 36,
+		.hsync_len	= 119,
+		.vsync_len	= 5,
+		.xres		= 800,
+		.yres		= 600,
+	},
+	.max_bpp	= 32,
+	.default_bpp	= 16,
+	.virtual_y	= 800 * 2,
+	.virtual_x	= 600,
+#endif
 };
 
 /* 405566 clocks per frame => 60Hz refresh requires 24333960Hz clock */
