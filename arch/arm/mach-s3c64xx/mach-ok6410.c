@@ -34,6 +34,10 @@
 #include <linux/mtd/mtd.h>
 #include <linux/mtd/partitions.h>
 
+#ifdef CONFIG_DM9000
+#include <linux/dm9000.h>
+#endif
+
 #ifdef CONFIG_SMDK6410_WM1190_EV1
 #include <linux/mfd/wm8350/core.h>
 #include <linux/mfd/wm8350/pmic.h>
