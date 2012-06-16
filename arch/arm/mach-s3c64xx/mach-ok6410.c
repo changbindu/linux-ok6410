@@ -26,7 +26,6 @@
 #include <linux/fb.h>
 #include <linux/gpio.h>
 #include <linux/delay.h>
-#include <linux/smsc911x.h>
 #include <linux/regulator/fixed.h>
 #include <linux/regulator/machine.h>
 #include <linux/pwm_backlight.h>
@@ -451,40 +450,6 @@ static struct s3c_fb_platdata ok6410_lcd_pdata __initdata = {
 	.vidcon1	= VIDCON1_INV_HSYNC | VIDCON1_INV_VSYNC,
 };
 
-/*
- * Configuring Ethernet on SMDK6410
- *
- * Both CS8900A and LAN9115 chips share one chip select mediated by CFG6.
- * The constant address below corresponds to nCS1
- *
- *  1) Set CFGB2 p3 ON others off, no other CFGB selects "ethernet"
- *  2) CFG6 needs to be switched to "LAN9115" side
- */
-
-static struct resource ok6410_smsc911x_resources[] = {
-	[0] = DEFINE_RES_MEM(S3C64XX_PA_XM0CSN1, SZ_64K),
-	[1] = DEFINE_RES_NAMED(S3C_EINT(10), 1, NULL, IORESOURCE_IRQ \
-					| IRQ_TYPE_LEVEL_LOW),
-};
-
-static struct smsc911x_platform_config ok6410_smsc911x_pdata = {
-	.irq_polarity  = SMSC911X_IRQ_POLARITY_ACTIVE_LOW,
-	.irq_type      = SMSC911X_IRQ_TYPE_OPEN_DRAIN,
-	.flags         = SMSC911X_USE_32BIT | SMSC911X_FORCE_INTERNAL_PHY,
-	.phy_interface = PHY_INTERFACE_MODE_MII,
-};
-
-
-static struct platform_device ok6410_smsc911x = {
-	.name          = "smsc911x",
-	.id            = -1,
-	.num_resources = ARRAY_SIZE(ok6410_smsc911x_resources),
-	.resource      = &ok6410_smsc911x_resources[0],
-	.dev = {
-		.platform_data = &ok6410_smsc911x_pdata,
-	},
-};
-
 #ifdef CONFIG_REGULATOR
 static struct regulator_consumer_supply ok6410_b_pwr_5v_consumers[] __initdata = {
 	REGULATOR_SUPPLY("PVDD", "0-001b"),
@@ -567,7 +532,6 @@ static struct platform_device *ok6410_devices[] __initdata = {
 #ifdef CONFIG_DM9000
 	&s3c_device_dm9000,
 #endif
-	&ok6410_smsc911x,
 	&s3c_device_adc,
 	&s3c_device_cfcon,
 	&s3c_device_rtc,
