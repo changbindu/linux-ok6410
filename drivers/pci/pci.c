@@ -1744,6 +1744,11 @@ int pci_prepare_to_sleep(struct pci_dev *dev)
 	if (target_state == PCI_POWER_ERROR)
 		return -EIO;
 
+	/* Some devices mustn't be in D3 during system sleep */
+	if (target_state == PCI_D3hot &&
+			(dev->dev_flags & PCI_DEV_FLAGS_NO_D3_DURING_SLEEP))
+		return 0;
+
 	pci_enable_wake(dev, target_state, device_may_wakeup(&dev->dev));
 
 	error = pci_set_power_state(dev, target_state);
@@ -2370,7 +2375,7 @@ void pci_enable_acs(struct pci_dev *dev)
  * number is always 0 (see the Implementation Note in section 2.2.8.1 of
  * the PCI Express Base Specification, Revision 2.1)
  */
-u8 pci_swizzle_interrupt_pin(struct pci_dev *dev, u8 pin)
+u8 pci_swizzle_interrupt_pin(const struct pci_dev *dev, u8 pin)
 {
 	int slot;
 
