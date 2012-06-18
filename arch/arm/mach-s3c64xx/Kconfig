@@ -291,16 +291,6 @@ config FB_S3C_VGA1024768
 		help
 		  VGA 1024x768
 
-config FB_S3C_VGA800600
-		boolean "VGA 800x600"
-		help
-		  VGA 800x600
-
-config FB_S3C_VGA640480
-		boolean "VGA 640x480"
-		help
-		  VGA 640x480
-
 config FB_S3C_EZVGA800600
 		boolean "EZVGA 800x600"
 		help

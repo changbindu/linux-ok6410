@@ -446,18 +446,6 @@ static struct fb_videomode ok6410_lcd_timing = {
 	.xres		= 1024,
 	.yres		= 768,
 };
-#elif defined(CONFIG_FB_S3C_VGA800600)
-/* VGA 800x600 */
-static struct s3c_fb_pd_win ok6410_fb_win0 = {
-};
-static struct fb_videomode ok6410_lcd_timing = {
-};
-#elif defined(CONFIG_FB_S3C_VGA640480)
-/* VGA 640x480 */
-static struct s3c_fb_pd_win ok6410_fb_win0 = {
-};
-static struct fb_videomode ok6410_lcd_timing = {
-};
 #elif defined(CONFIG_FB_S3C_EZVGA800600)
 /* EZVGA 800x600 */
 static struct s3c_fb_pd_win ok6410_fb_win0 = {
