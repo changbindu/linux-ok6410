@@ -2215,7 +2215,7 @@ static int s3c_hsotg_corereset(struct s3c_hsotg *hsotg)
 	/* issue soft reset */
 	writel(GRSTCTL_CSftRst, hsotg->regs + GRSTCTL);
 
-	timeout = 1000;
+	timeout = 10000;
 	do {
 		grstctl = readl(hsotg->regs + GRSTCTL);
 	} while ((grstctl & GRSTCTL_CSftRst) && timeout-- > 0);
@@ -2225,7 +2225,7 @@ static int s3c_hsotg_corereset(struct s3c_hsotg *hsotg)
 		return -EINVAL;
 	}
 
-	timeout = 1000;
+	timeout = 10000;
 
 	while (1) {
 		u32 grstctl = readl(hsotg->regs + GRSTCTL);
