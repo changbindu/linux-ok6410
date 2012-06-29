@@ -41,6 +41,16 @@ echo "	mk_clean	- clean files built"
 echo "	mk_modules_install - install buit modules to 'INSTALL_MOD_PATH'"
 echo "	dnw_uImage	- download uImage to board via dnw tool"
 
+get_kernel_version()
+{
+	version=""
+	awk -F ' = ' '{if(NR==1){printf("%d.",$2)}
+		else if(NR==2){printf("%d.",$2)}
+		else if(NR==3){printf("%d",$2)}
+		else if(NR==4){print $2}
+		else {exit}}' "$KERNELDIR/Makefile"
+}
+
 mk()
 {
 	$MAKE -C $KERNELDIR O="$O" -j$JOBS $*
@@ -60,9 +70,11 @@ mk_defconfig()
 
 mk_uImage()
 {
+	target="$O/uImage-linux-v`get_kernel_version`.bin"
 	echo "buid to U-Boot wrapped zImage"
 	mk uImage
-	cp "$O/arch/arm/boot/uImage" "$O"
+	cp "$O/arch/arm/boot/uImage" "$target"
+	echo "your u-image: $target"
 }
 
 mk_clean()
