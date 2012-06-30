@@ -48,6 +48,7 @@
 #endif
 
 #include <video/platform_lcd.h>
+#include <media/gpio-ir-recv.h>
 
 #include <asm/hardware/vic.h>
 #include <asm/mach/arch.h>
@@ -285,6 +286,22 @@ static struct platform_device ok6410_gpio_button_device = {
 	.dev		= {
 		.platform_data	= &gpio_button_data,
 	}
+};
+
+/**
+ * gpio_ir_recv need a pin that could triger IRQ, but the pin connected to ir
+ * receiver on ok6410 is GPE1 which doesn't have that function. So this ir device
+ * actually not work yet. We may consider using other pin like GPMx instead.
+ */
+static struct gpio_ir_recv_platform_data ok6410_gpio_ir_recv_data = {
+	.gpio_nr	= S3C64XX_GPE(1),
+	.active_low	= false,
+};
+
+static struct platform_device ok6410_gpio_ir_recv = {
+	.name			= "gpio-rc-recv",
+	.num_resources		= 0,
+	.dev.platform_data	= &ok6410_gpio_ir_recv_data,
 };
 
 /* framebuffer and LCD setup. */
@@ -548,6 +565,7 @@ static struct platform_device *ok6410_devices[] __initdata = {
 	&s3c64xx_device_iisv4,
 	&ok6410_device_led,
 	&ok6410_gpio_button_device,
+	&ok6410_gpio_ir_recv,
 	&samsung_device_keypad,
 
 #ifdef CONFIG_REGULATOR
