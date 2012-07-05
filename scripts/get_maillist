@@ -1,0 +1,46 @@
+#!/bin/sh
+
+# Du, Changbin <changbin.du@gmail.com>
+# usage: get_maillist <arguments-of-get_maintainer.pl>
+
+get_address()
+{
+	for line in $1
+	do
+		mail=`echo "$line" | grep -o '[a-zA-Z0-9][a-zA-Z0-9_-.]\{0,\}@[a-zA-Z0-9_-.]\{1,\}\.[a-zA-Z0-9_-.]\{1,\}' | uniq`
+		if echo "$line" | grep "maintainer" ;then
+			maintainer="$maintainer $mail"
+		elif echo "$line" | grep "supporter" ;then
+			supporter="$supporter $mail"
+		elif [ ! -z "$mail" ] ;then
+			other="$other $mail"
+		fi
+	done
+
+	if [ ! -z "$maintainer" ] ;then
+		tolist="$maintainer"
+		cclist="$supporter $other"
+	elif [ ! -z "$supporter" ] ;then
+		tolist="$supporter"
+		cclist="$other"
+	else
+		echo "warning: no maintainer or supporter found!\n" >&2
+		cclist="$other"
+	fi
+	
+	for mail in $tolist
+	do
+		echo -n "-to $mail "
+	done
+	for mail in $cclist
+	do
+		echo -n "-cc $mail "
+	done
+}
+
+buf=`scripts/get_maintainer.pl $*`
+echo "$buf"
+echo "-------------------------------------------------------------------------"
+get_address "$buf"
+echo ""
+echo "-------------------------------------------------------------------------"

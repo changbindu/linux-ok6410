@@ -1,0 +1,9 @@
+target:
+	1. directly send a patch file via git
+	2. gernerate and send patch file via git
+	3. patch check before sending
+	4. automatically append "to" and "cc" list
+
+laguage:
+	1. shell	_/
+	2. python	X
