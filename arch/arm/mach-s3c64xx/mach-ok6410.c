@@ -26,6 +26,7 @@
 #include <linux/fb.h>
 #include <linux/gpio.h>
 #include <linux/delay.h>
+#include <linux/smsc911x.h>
 #include <linux/regulator/fixed.h>
 #include <linux/regulator/machine.h>
 #include <linux/pwm_backlight.h>
@@ -48,6 +49,7 @@
 #endif
 
 #include <video/platform_lcd.h>
+#include <video/samsung_fimd.h>
 #include <media/gpio-ir-recv.h>
 
 #include <asm/hardware/vic.h>
@@ -66,8 +68,8 @@
 #include <mach/regs-gpio.h>
 #include <mach/regs-sys.h>
 #include <mach/regs-srom.h>
-#include <plat/ata.h>
-#include <plat/iic.h>
+#include <linux/platform_data/ata-samsung_cf.h>
+#include <linux/platform_data/i2c-s3c2410.h>
 #include <plat/fb.h>
 #include <plat/gpio-cfg.h>
 
@@ -75,12 +77,12 @@
 #include <plat/devs.h>
 #include <plat/cpu.h>
 #include <plat/adc.h>
-#include <plat/ts.h>
+#include <linux/platform_data/touchscreen-s3c2410.h>
 #include <plat/keypad.h>
 #include <linux/gpio_keys.h>
 #include <plat/backlight.h>
-#include <plat/regs-fb-v4.h>
-#include <plat/nand.h>
+
+#include <linux/platform_data/mtd-nand-s3c2410.h>
 
 #include "common.h"
 
