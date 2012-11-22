@@ -81,6 +81,8 @@
 #include <plat/keypad.h>
 #include <linux/gpio_keys.h>
 #include <plat/backlight.h>
+#include <plat/usb-phy.h>
+
 
 #include <linux/platform_data/mtd-nand-s3c2410.h>
 
@@ -561,8 +563,8 @@ static struct platform_device *ok6410_devices[] __initdata = {
 	&s3c_device_i2c0,
 	&s3c_device_i2c1,
 	&s3c_device_fb,
-	&s3c_device_ohci,
 	&s3c_device_usb_hsotg,
+	&s3c_device_ohci,
 	&samsung_asoc_dma,
 	&s3c64xx_device_iisv4,
 	&ok6410_device_led,
@@ -922,7 +924,23 @@ static struct platform_pwm_backlight_data ok6410_bl_data = {
 	.pwm_id = 1,
 };
 
-static struct s3c_hsotg_plat ok6410_hsotg_pdata;
+static int ok6410_usb_phy_init(struct platform_device *pdev, int type)
+{
+	return 0;
+}
+
+static int ok6410_usb_phy_exit(struct platform_device *pdev, int type)
+{
+	return 0;
+}
+
+static struct s3c_hsotg_plat ok6410_hsotg_pdata = {
+	/* replace phy init/exit NOP functions, so keep usb phy clock enabled
+	 * which is needed by USB 1.0 host controller.
+	 */
+	.phy_init = ok6410_usb_phy_init,
+	.phy_exit = ok6410_usb_phy_exit,
+};
 
 static void __init ok6410_map_io(void)
 {
@@ -990,6 +1008,9 @@ static void __init ok6410_machine_init(void)
 	samsung_bl_set(&ok6410_bl_gpio_info, &ok6410_bl_data);
 
 	platform_add_devices(ok6410_devices, ARRAY_SIZE(ok6410_devices));
+
+	/* enable USB phy clock */
+	s5p_usb_phy_init(&s3c_device_usb_hsotg, S5P_USB_PHY_DEVICE);
 }
 
 MACHINE_START(OK6410, "OK6410")
