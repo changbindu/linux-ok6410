@@ -565,7 +565,6 @@ static struct platform_device *ok6410_devices[] __initdata = {
 	&s3c_device_fb,
 	&s3c_device_usb_hsotg,
 	&s3c_device_ohci,
-	&samsung_asoc_dma,
 	&s3c64xx_device_iisv4,
 	&ok6410_device_led,
 	&ok6410_gpio_button_device,
