@@ -70,7 +70,7 @@ mk_defconfig()
 
 mk_uImage()
 {
-	target="$O/uImage-linux-v`get_kernel_version`.bin"
+	target="$O/ok6410-uImage-linux-v`get_kernel_version`.bin"
 	echo "buid to U-Boot wrapped zImage"
 	mk uImage
 	cp "$O/arch/arm/boot/uImage" "$target"
