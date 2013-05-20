@@ -77,6 +77,7 @@
 #include <plat/keypad.h>
 #include <linux/gpio_keys.h>
 #include <plat/backlight.h>
+#include <plat/samsung-time.h>
 #include <plat/usb-phy.h>
 
 
@@ -946,6 +947,7 @@ static void __init ok6410_map_io(void)
 	s3c64xx_init_io(ok6410_iodesc, ARRAY_SIZE(ok6410_iodesc));
 	s3c24xx_init_clocks(12000000);
 	s3c24xx_init_uarts(ok6410_uartcfgs, ARRAY_SIZE(ok6410_uartcfgs));
+	samsung_set_timer_source(SAMSUNG_PWM3, SAMSUNG_PWM4);
 
 	/* set the LCD type */
 
@@ -1007,7 +1009,7 @@ static void __init ok6410_machine_init(void)
 	platform_add_devices(ok6410_devices, ARRAY_SIZE(ok6410_devices));
 
 	/* enable USB phy clock */
-	s5p_usb_phy_init(&s3c_device_usb_hsotg, S5P_USB_PHY_DEVICE);
+	s5p_usb_phy_init(&s3c_device_usb_hsotg, USB_PHY_TYPE_DEVICE);
 }
 
 MACHINE_START(OK6410, "OK6410")
@@ -1018,6 +1020,6 @@ MACHINE_START(OK6410, "OK6410")
 	.map_io		= ok6410_map_io,
 	.init_machine	= ok6410_machine_init,
 	.init_late	= s3c64xx_init_late,
-	.init_time	= s3c24xx_timer_init,
+	.init_time	= samsung_timer_init,
 	.restart	= s3c64xx_restart,
 MACHINE_END
