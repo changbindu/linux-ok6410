@@ -79,9 +79,10 @@
 #include <plat/backlight.h>
 #include <plat/samsung-time.h>
 #include <plat/usb-phy.h>
-
+#include <plat/sdhci.h>
 
 #include <linux/platform_data/mtd-nand-s3c2410.h>
+#include <linux/platform_data/mmc-sdhci-s3c.h>
 
 #include "common.h"
 #include "regs-modem.h"
@@ -553,13 +554,19 @@ static struct samsung_keypad_platdata ok6410_keypad_data __initdata = {
 
 static struct map_desc ok6410_iodesc[] = {};
 
+static struct s3c_sdhci_platdata ok6410_hsmmc0_pdata __initdata = {
+	.max_width	= 4,
+	.cd_type	= S3C_SDHCI_CD_INTERNAL,
+};
+
+static struct s3c_sdhci_platdata ok6410_hsmmc1_pdata __initdata = {
+	.max_width	= 4,
+	.cd_type	= S3C_SDHCI_CD_PERMANENT,
+};
+
 static struct platform_device *ok6410_devices[] __initdata = {
-#ifdef CONFIG_SMDK6410_SD_CH0
 	&s3c_device_hsmmc0,
-#endif
-#ifdef CONFIG_SMDK6410_SD_CH1
 	&s3c_device_hsmmc1,
-#endif
 	&s3c_device_i2c0,
 	&s3c_device_i2c1,
 	&s3c_device_fb,
@@ -1001,6 +1008,9 @@ static void __init ok6410_machine_init(void)
 
 	i2c_register_board_info(0, i2c_devs0, ARRAY_SIZE(i2c_devs0));
 	i2c_register_board_info(1, i2c_devs1, ARRAY_SIZE(i2c_devs1));
+
+	s3c_sdhci0_set_platdata(&ok6410_hsmmc0_pdata);
+	s3c_sdhci1_set_platdata(&ok6410_hsmmc1_pdata);
 
 	s3c_ide_set_platdata(&ok6410_ide_pdata);
 
