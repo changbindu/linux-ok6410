@@ -39,7 +39,6 @@ echo "	mk_uImage	- build kernel to U-Boot image"
 echo "	mk_check	- check source"
 echo "	mk_clean	- clean files built"
 echo "	mk_modules_install - install buit modules to 'INSTALL_MOD_PATH'"
-echo "	dnw_uImage	- download uImage to board via dnw tool"
 
 get_kernel_version()
 {
@@ -107,7 +106,3 @@ mk_modules_install()
 	mk modules_install
 }
 
-dnw_uImage()
-{
-	dnw $O/uImage
-}
