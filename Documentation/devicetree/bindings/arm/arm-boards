@@ -14,6 +14,9 @@ Required nodes:
 - core-module: the root node to the Integrator platforms must have
   a core-module with regs and the compatible string
   "arm,core-module-integrator"
+- external-bus-interface: the root node to the Integrator platforms
+  must have an external bus interface with regs and the
+  compatible-string "arm,external-bus-interface"
 
   Required properties for the core module:
   - regs: the location and size of the core module registers, one
@@ -48,6 +51,11 @@ Required nodes:
 		reg = <0x10000000 0x200>;
 	};
 
+	ebi@12000000 {
+		compatible = "arm,external-bus-interface";
+		reg = <0x12000000 0x100>;
+	};
+
 	syscon {
 		compatible = "arm,integrator-ap-syscon";
 		reg = <0x11000000 0x100>;
@@ -78,3 +86,9 @@ Interrupt controllers:
 	compatible = "arm,versatile-sic";
 	interrupt-controller;
 	#interrupt-cells = <1>;
+
+Required nodes:
+
+- core-module: the root node to the Versatile platforms must have
+  a core-module with regs and the compatible strings
+  "arm,core-module-versatile", "syscon"

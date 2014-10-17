@@ -174,35 +174,38 @@ static void mic_x100_send_intr(struct mic_device *mdev, int doorbell)
 }
 
 /**
- * mic_ack_interrupt - Device specific interrupt handling.
- * @mdev: pointer to mic_device instance
+ * mic_x100_ack_interrupt - Read the interrupt sources register and
+ * clear it. This function will be called in the MSI/INTx case.
+ * @mdev: Pointer to mic_device instance.
  *
- * Returns: bitmask of doorbell events triggered.
+ * Returns: bitmask of interrupt sources triggered.
  */
 static u32 mic_x100_ack_interrupt(struct mic_device *mdev)
 {
-	u32 reg = 0;
-	struct mic_mw *mw = &mdev->mmio;
 	u32 sicr0 = MIC_X100_SBOX_BASE_ADDRESS + MIC_X100_SBOX_SICR0;
+	u32 reg = mic_mmio_read(&mdev->mmio, sicr0);
+	mic_mmio_write(&mdev->mmio, reg, sicr0);
+	return reg;
+}
+
+/**
+ * mic_x100_intr_workarounds - These hardware specific workarounds are
+ * to be invoked everytime an interrupt is handled.
+ * @mdev: Pointer to mic_device instance.
+ *
+ * Returns: none
+ */
+static void mic_x100_intr_workarounds(struct mic_device *mdev)
+{
+	struct mic_mw *mw = &mdev->mmio;
 
 	/* Clear pending bit array. */
 	if (MIC_A0_STEP == mdev->stepping)
 		mic_mmio_write(mw, 1, MIC_X100_SBOX_BASE_ADDRESS +
 			MIC_X100_SBOX_MSIXPBACR);
 
-	if (mdev->irq_info.num_vectors <= 1) {
-		reg = mic_mmio_read(mw, sicr0);
-
-		if (unlikely(!reg))
-			goto done;
-
-		mic_mmio_write(mw, reg, sicr0);
-	}
-
 	if (mdev->stepping >= MIC_B0_STEP)
 		mdev->intr_ops->enable_interrupts(mdev);
-done:
-	return reg;
 }
 
 /**
@@ -546,6 +549,13 @@ struct mic_smpt_ops mic_x100_smpt_ops = {
 	.set = mic_x100_smpt_set,
 };
 
+static bool mic_x100_dma_filter(struct dma_chan *chan, void *param)
+{
+	if (chan->device->dev->parent == (struct device *)param)
+		return true;
+	return false;
+}
+
 struct mic_hw_ops mic_x100_ops = {
 	.aper_bar = MIC_X100_APER_BAR,
 	.mmio_bar = MIC_X100_MMIO_BAR,
@@ -553,12 +563,14 @@ struct mic_hw_ops mic_x100_ops = {
 	.write_spad = mic_x100_write_spad,
 	.send_intr = mic_x100_send_intr,
 	.ack_interrupt = mic_x100_ack_interrupt,
+	.intr_workarounds = mic_x100_intr_workarounds,
 	.reset = mic_x100_hw_reset,
 	.reset_fw_ready = mic_x100_reset_fw_ready,
 	.is_fw_ready = mic_x100_is_fw_ready,
 	.send_firmware_intr = mic_x100_send_firmware_intr,
 	.load_mic_fw = mic_x100_load_firmware,
 	.get_postcode = mic_x100_get_postcode,
+	.dma_filter = mic_x100_dma_filter,
 };
 
 struct mic_hw_intr_ops mic_x100_intr_ops = {

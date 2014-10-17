@@ -147,6 +147,7 @@ static const struct file_operations vme_user_fops = {
 	.write = vme_user_write,
 	.llseek = vme_user_llseek,
 	.unlocked_ioctl = vme_user_unlocked_ioctl,
+	.compat_ioctl = vme_user_unlocked_ioctl,
 };
 
 
@@ -432,7 +433,6 @@ static loff_t vme_user_llseek(struct file *file, loff_t off, int whence)
 	default:
 		mutex_unlock(&image[minor].mutex);
 		return -EINVAL;
-		break;
 	}
 
 	if ((absolute < 0) || (absolute >= image_size)) {
@@ -510,7 +510,6 @@ static int vme_user_ioctl(struct inode *inode, struct file *file,
 			}
 
 			return retval;
-			break;
 
 		case VME_SET_MASTER:
 
@@ -551,7 +550,6 @@ static int vme_user_ioctl(struct inode *inode, struct file *file,
 			}
 
 			return retval;
-			break;
 
 		case VME_SET_SLAVE:
 
@@ -663,9 +661,16 @@ err_nocard:
 
 static int vme_user_match(struct vme_dev *vdev)
 {
-	if (vdev->num >= VME_USER_BUS_MAX)
-		return 0;
-	return 1;
+	int i;
+
+	int cur_bus = vme_bus_num(vdev);
+	int cur_slot = vme_slot_num(vdev);
+
+	for (i = 0; i < bus_num; i++)
+		if ((cur_bus == bus[i]) && (cur_slot == vdev->num))
+			return 1;
+
+	return 0;
 }
 
 /*
@@ -676,7 +681,7 @@ static int vme_user_match(struct vme_dev *vdev)
 static int vme_user_probe(struct vme_dev *vdev)
 {
 	int i, err;
-	char name[12];
+	char *name;
 
 	/* Save pointer to the bridge device */
 	if (vme_user_bridge != NULL) {
@@ -768,7 +773,8 @@ static int vme_user_probe(struct vme_dev *vdev)
 		image[i].kern_buf = kmalloc(image[i].size_buf, GFP_KERNEL);
 		if (image[i].kern_buf == NULL) {
 			err = -ENOMEM;
-			goto err_master_buf;
+			vme_master_free(image[i].resource);
+			goto err_master;
 		}
 	}
 
@@ -783,20 +789,20 @@ static int vme_user_probe(struct vme_dev *vdev)
 	/* Add sysfs Entries */
 	for (i = 0; i < VME_DEVS; i++) {
 		int num;
+
 		switch (type[i]) {
 		case MASTER_MINOR:
-			sprintf(name, "bus/vme/m%%d");
+			name = "bus/vme/m%d";
 			break;
 		case CONTROL_MINOR:
-			sprintf(name, "bus/vme/ctl");
+			name = "bus/vme/ctl";
 			break;
 		case SLAVE_MINOR:
-			sprintf(name, "bus/vme/s%%d");
+			name = "bus/vme/s%d";
 			break;
 		default:
 			err = -EINVAL;
 			goto err_sysfs;
-			break;
 		}
 
 		num = (type[i] == SLAVE_MINOR) ? i - (MASTER_MAX + 1) : i;
@@ -811,8 +817,6 @@ static int vme_user_probe(struct vme_dev *vdev)
 
 	return 0;
 
-	/* Ensure counter set correcty to destroy all sysfs devices */
-	i = VME_DEVS;
 err_sysfs:
 	while (i > 0) {
 		i--;
@@ -822,12 +826,10 @@ err_sysfs:
 
 	/* Ensure counter set correcty to unalloc all master windows */
 	i = MASTER_MAX + 1;
-err_master_buf:
-	for (i = MASTER_MINOR; i < (MASTER_MAX + 1); i++)
-		kfree(image[i].kern_buf);
 err_master:
 	while (i > MASTER_MINOR) {
 		i--;
+		kfree(image[i].kern_buf);
 		vme_master_free(image[i].resource);
 	}
 

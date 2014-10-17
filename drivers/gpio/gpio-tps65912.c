@@ -79,7 +79,7 @@ static struct gpio_chip template_chip = {
 	.direction_output	= tps65912_gpio_output,
 	.get			= tps65912_gpio_get,
 	.set			= tps65912_gpio_set,
-	.can_sleep		= 1,
+	.can_sleep		= true,
 	.ngpio			= 5,
 	.base			= -1,
 };
@@ -117,7 +117,8 @@ static int tps65912_gpio_remove(struct platform_device *pdev)
 {
 	struct tps65912_gpio_data  *tps65912_gpio = platform_get_drvdata(pdev);
 
-	return gpiochip_remove(&tps65912_gpio->gpio_chip);
+	gpiochip_remove(&tps65912_gpio->gpio_chip);
+	return 0;
 }
 
 static struct platform_driver tps65912_gpio_driver = {

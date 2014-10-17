@@ -370,10 +370,10 @@ static const struct iio_info iio_dummy_info = {
 	.read_raw = &iio_dummy_read_raw,
 	.write_raw = &iio_dummy_write_raw,
 #ifdef CONFIG_IIO_SIMPLE_DUMMY_EVENTS
-	.read_event_config_new = &iio_simple_dummy_read_event_config,
-	.write_event_config_new = &iio_simple_dummy_write_event_config,
-	.read_event_value_new = &iio_simple_dummy_read_event_value,
-	.write_event_value_new = &iio_simple_dummy_write_event_value,
+	.read_event_config = &iio_simple_dummy_read_event_config,
+	.write_event_config = &iio_simple_dummy_write_event_config,
+	.read_event_value = &iio_simple_dummy_read_event_value,
+	.write_event_value = &iio_simple_dummy_write_event_value,
 #endif /* CONFIG_IIO_SIMPLE_DUMMY_EVENTS */
 };
 
@@ -550,6 +550,7 @@ error_ret:
 static __init int iio_dummy_init(void)
 {
 	int i, ret;
+
 	if (instances > 10) {
 		instances = 1;
 		return -EINVAL;
@@ -577,6 +578,7 @@ module_init(iio_dummy_init);
 static __exit void iio_dummy_exit(void)
 {
 	int i;
+
 	for (i = 0; i < instances; i++)
 		iio_dummy_remove(i);
 	kfree(iio_dummy_devs);

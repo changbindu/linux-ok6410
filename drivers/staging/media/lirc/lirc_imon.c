@@ -23,7 +23,6 @@
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
 #include <linux/errno.h>
-#include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/slab.h>
@@ -190,6 +189,7 @@ MODULE_PARM_DESC(debug, "Debug messages: 0=no, 1=yes(default: no)");
 static void free_imon_context(struct imon_context *context)
 {
 	struct device *dev = context->driver->dev;
+
 	usb_free_urb(context->tx_urb);
 	usb_free_urb(context->rx_urb);
 	lirc_buffer_free(context->driver->rbuf);
@@ -482,8 +482,6 @@ static void usb_tx_callback(struct urb *urb)
 	/* notify waiters that write has finished */
 	atomic_set(&context->tx.busy, 0);
 	complete(&context->tx.finished);
-
-	return;
 }
 
 /**
@@ -548,7 +546,6 @@ static void ir_close(void *data)
 	}
 
 	mutex_unlock(&context->ctx_lock);
-	return;
 }
 
 /**
@@ -573,7 +570,6 @@ static void submit_data(struct imon_context *context)
 
 	lirc_buffer_write(context->driver->rbuf, buf);
 	wake_up(&context->driver->rbuf->wait_poll);
-	return;
 }
 
 static inline int tv2int(const struct timeval *a, const struct timeval *b)
@@ -657,6 +653,7 @@ static void imon_incoming_packet(struct imon_context *context,
 		mask = 0x80;
 		for (bit = 0; bit < 8; ++bit) {
 			int curr_bit = !(buf[octet] & mask);
+
 			if (curr_bit != context->rx.prev_bit) {
 				if (context->rx.count) {
 					submit_data(context);
@@ -708,8 +705,6 @@ static void usb_rx_callback(struct urb *urb)
 	}
 
 	usb_submit_urb(context->rx_urb, GFP_ATOMIC);
-
-	return;
 }
 
 /**
@@ -776,6 +771,7 @@ static int imon_probe(struct usb_interface *interface,
 		struct usb_endpoint_descriptor *ep;
 		int ep_dir;
 		int ep_type;
+
 		ep = &iface_desc->endpoint[i].desc;
 		ep_dir = ep->bEndpointAddress & USB_ENDPOINT_DIR_MASK;
 		ep_type = ep->bmAttributes & USB_ENDPOINT_XFERTYPE_MASK;
@@ -808,7 +804,8 @@ static int imon_probe(struct usb_interface *interface,
 
 	/* Input endpoint is mandatory */
 	if (!ir_ep_found) {
-		dev_err(dev, "%s: no valid input (IR) endpoint found.\n", __func__);
+		dev_err(dev, "%s: no valid input (IR) endpoint found.\n",
+			__func__);
 		retval = -ENODEV;
 		alloc_status = 2;
 		goto alloc_status_switch;
@@ -878,8 +875,8 @@ static int imon_probe(struct usb_interface *interface,
 		alloc_status = 7;
 		goto unlock;
 	} else
-		dev_info(dev, "Registered iMON driver "
-			 "(lirc minor: %d)\n", lirc_minor);
+		dev_info(dev, "Registered iMON driver (lirc minor: %d)\n",
+			 lirc_minor);
 
 	/* Needed while unregistering! */
 	driver->minor = lirc_minor;
@@ -923,8 +920,8 @@ static int imon_probe(struct usb_interface *interface,
 
 		if (usb_register_dev(interface, &imon_class)) {
 			/* Not a fatal error, so ignore */
-			dev_info(dev, "%s: could not get a minor number for "
-				 "display\n", __func__);
+			dev_info(dev, "%s: could not get a minor number for display\n",
+				 __func__);
 		}
 	}
 
@@ -943,13 +940,17 @@ alloc_status_switch:
 		usb_free_urb(tx_urb);
 	case 6:
 		usb_free_urb(rx_urb);
+		/* fall-through */
 	case 5:
 		if (rbuf)
 			lirc_buffer_free(rbuf);
+		/* fall-through */
 	case 4:
 		kfree(rbuf);
+		/* fall-through */
 	case 3:
 		kfree(driver);
+		/* fall-through */
 	case 2:
 		kfree(context);
 		context = NULL;

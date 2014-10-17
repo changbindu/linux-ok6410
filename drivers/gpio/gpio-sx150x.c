@@ -22,7 +22,6 @@
 #include <linux/module.h>
 #include <linux/mutex.h>
 #include <linux/slab.h>
-#include <linux/workqueue.h>
 #include <linux/i2c/sx150x.h>
 
 #define NO_UPDATE_PENDING	-1
@@ -436,7 +435,7 @@ static void sx150x_init_chip(struct sx150x_chip *chip,
 	chip->gpio_chip.set              = sx150x_gpio_set;
 	chip->gpio_chip.to_irq           = sx150x_gpio_to_irq;
 	chip->gpio_chip.base             = pdata->gpio_base;
-	chip->gpio_chip.can_sleep        = 1;
+	chip->gpio_chip.can_sleep        = true;
 	chip->gpio_chip.ngpio            = chip->dev_cfg->ngpios;
 	if (pdata->oscio_is_gpo)
 		++chip->gpio_chip.ngpio;
@@ -616,19 +615,16 @@ static int sx150x_probe(struct i2c_client *client,
 
 	return 0;
 probe_fail_post_gpiochip_add:
-	WARN_ON(gpiochip_remove(&chip->gpio_chip) < 0);
+	gpiochip_remove(&chip->gpio_chip);
 	return rc;
 }
 
 static int sx150x_remove(struct i2c_client *client)
 {
 	struct sx150x_chip *chip;
-	int rc;
 
 	chip = i2c_get_clientdata(client);
-	rc = gpiochip_remove(&chip->gpio_chip);
-	if (rc < 0)
-		return rc;
+	gpiochip_remove(&chip->gpio_chip);
 
 	if (chip->irq_summary >= 0)
 		sx150x_remove_irq_chip(chip);

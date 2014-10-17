@@ -1009,7 +1009,7 @@ static int ipipe_validate_yee_params(struct vpfe_ipipe_yee *yee)
 	    yee->es_ofst_grad > YEE_THR_MASK)
 		return -EINVAL;
 
-	for (i = 0; i < VPFE_IPIPE_MAX_SIZE_YEE_LUT ; i++)
+	for (i = 0; i < VPFE_IPIPE_MAX_SIZE_YEE_LUT; i++)
 		if (yee->table[i] > YEE_ENTRY_MASK)
 			return -EINVAL;
 
@@ -1268,6 +1268,7 @@ static int ipipe_s_config(struct v4l2_subdev *sd, struct vpfe_ipipe_config *cfg)
 
 	for (i = 0; i < ARRAY_SIZE(ipipe_modules); i++) {
 		unsigned int bit = 1 << i;
+
 		if (cfg->flag & bit) {
 			const struct ipipe_module_if *module_if =
 						&ipipe_modules[i];
@@ -1310,6 +1311,7 @@ static int ipipe_g_config(struct v4l2_subdev *sd, struct vpfe_ipipe_config *cfg)
 
 	for (i = 1; i < ARRAY_SIZE(ipipe_modules); i++) {
 		unsigned int bit = 1 << i;
+
 		if (cfg->flag & bit) {
 			const struct ipipe_module_if *module_if =
 						&ipipe_modules[i];

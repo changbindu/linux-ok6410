@@ -246,7 +246,7 @@ int local_object_create(const struct lu_env *env,
 			struct dt_object_format *dof, struct thandle *th)
 {
 	struct dt_thread_info	*dti = dt_info(env);
-	obd_id			 lastid;
+	__le64			 lastid;
 	int			 rc;
 
 	rc = dt_create(env, o, attr, NULL, dof, th);
@@ -670,7 +670,7 @@ int lastid_compat_check(const struct lu_env *env, struct dt_device *dev,
 		return PTR_ERR(root);
 
 	/* find old last_id file */
-	snprintf(dti->dti_buf, sizeof(dti->dti_buf), "seq-"LPX64"-lastid",
+	snprintf(dti->dti_buf, sizeof(dti->dti_buf), "seq-%#llx-lastid",
 		 lastid_seq);
 	rc = dt_lookup_dir(env, root, dti->dti_buf, &dti->dti_fid);
 	lu_object_put_nocache(env, &root->do_lu);
@@ -693,7 +693,7 @@ int lastid_compat_check(const struct lu_env *env, struct dt_device *dev,
 	} else if (rc < 0) {
 		return rc;
 	} else {
-		CDEBUG(D_INFO, "Found old lastid file for sequence "LPX64"\n",
+		CDEBUG(D_INFO, "Found old lastid file for sequence %#llx\n",
 		       lastid_seq);
 		o = ls_locate(env, ls, &dti->dti_fid);
 		if (IS_ERR(o))
@@ -709,12 +709,12 @@ int lastid_compat_check(const struct lu_env *env, struct dt_device *dev,
 	dt_read_unlock(env, o);
 	lu_object_put_nocache(env, &o->do_lu);
 	if (rc == 0 && le32_to_cpu(losd.lso_magic) != LOS_MAGIC) {
-		CERROR("%s: wrong content of seq-"LPX64"-lastid file, magic %x\n",
+		CERROR("%s: wrong content of seq-%#llx-lastid file, magic %x\n",
 		       o->do_lu.lo_dev->ld_obd->obd_name, lastid_seq,
 		       le32_to_cpu(losd.lso_magic));
 		return -EINVAL;
 	} else if (rc < 0) {
-		CERROR("%s: failed to read seq-"LPX64"-lastid: rc = %d\n",
+		CERROR("%s: failed to read seq-%#llx-lastid: rc = %d\n",
 		       o->do_lu.lo_dev->ld_obd->obd_name, lastid_seq, rc);
 		return rc;
 	}
@@ -737,7 +737,7 @@ int lastid_compat_check(const struct lu_env *env, struct dt_device *dev,
  * All dynamic fids will be generated with the same sequence and incremented
  * OIDs
  *
- * Returned local_oid_storage is in-memory representaion of OID storage
+ * Returned local_oid_storage is in-memory representation of OID storage
  */
 int local_oid_storage_init(const struct lu_env *env, struct dt_device *dev,
 			   const struct lu_fid *first_fid,
@@ -837,7 +837,7 @@ out_trans:
 		rc = dt_record_read(env, o, &dti->dti_lb, &dti->dti_off);
 		dt_read_unlock(env, o);
 		if (rc == 0 && le64_to_cpu(lastid) > OBIF_MAX_OID) {
-			CERROR("%s: bad oid "LPU64" is read from LAST_ID\n",
+			CERROR("%s: bad oid %llu is read from LAST_ID\n",
 			       o->do_lu.lo_dev->ld_obd->obd_name,
 			       le64_to_cpu(lastid));
 			rc = -EINVAL;
@@ -855,9 +855,12 @@ out_los:
 		(*los)->los_seq = fid_seq(first_fid);
 		(*los)->los_last_oid = le64_to_cpu(lastid);
 		(*los)->los_obj = o;
-		/* read value should not be less than initial one */
-		LASSERTF((*los)->los_last_oid >= first_oid, "%u < %u\n",
-			 (*los)->los_last_oid, first_oid);
+		/* Read value should not be less than initial one
+		 * but possible after upgrade from older fs.
+		 * In this case just switch to the first_oid in memory and
+		 * it will be updated on disk with first object generated */
+		if ((*los)->los_last_oid < first_oid)
+			(*los)->los_last_oid = first_oid;
 	}
 out:
 	mutex_unlock(&ls->ls_los_mutex);

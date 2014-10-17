@@ -49,84 +49,79 @@ TODO:
 #include "ni_tio_internal.h"
 #include "mite.h"
 
-MODULE_AUTHOR("Comedi <comedi@comedi.org>");
-MODULE_DESCRIPTION("Comedi command support for NI general-purpose counters");
-MODULE_LICENSE("GPL");
-
-static void ni_tio_configure_dma(struct ni_gpct *counter, short enable,
-				 short read_not_write)
+static void ni_tio_configure_dma(struct ni_gpct *counter,
+				 bool enable, bool read)
 {
 	struct ni_gpct_device *counter_dev = counter->counter_dev;
-	unsigned input_select_bits = 0;
+	unsigned cidx = counter->counter_index;
+	unsigned mask;
+	unsigned bits;
+
+	mask = GI_READ_ACKS_IRQ | GI_WRITE_ACKS_IRQ;
+	bits = 0;
 
 	if (enable) {
-		if (read_not_write)
-			input_select_bits |= Gi_Read_Acknowledges_Irq;
+		if (read)
+			bits |= GI_READ_ACKS_IRQ;
 		else
-			input_select_bits |= Gi_Write_Acknowledges_Irq;
+			bits |= GI_WRITE_ACKS_IRQ;
 	}
-	ni_tio_set_bits(counter,
-			NITIO_Gi_Input_Select_Reg(counter->counter_index),
-			Gi_Read_Acknowledges_Irq | Gi_Write_Acknowledges_Irq,
-			input_select_bits);
+	ni_tio_set_bits(counter, NITIO_INPUT_SEL_REG(cidx), mask, bits);
+
 	switch (counter_dev->variant) {
 	case ni_gpct_variant_e_series:
 		break;
 	case ni_gpct_variant_m_series:
 	case ni_gpct_variant_660x:
-		{
-			unsigned gi_dma_config_bits = 0;
+		mask = GI_DMA_ENABLE | GI_DMA_INT_ENA | GI_DMA_WRITE;
+		bits = 0;
 
-			if (enable) {
-				gi_dma_config_bits |= Gi_DMA_Enable_Bit;
-				gi_dma_config_bits |= Gi_DMA_Int_Bit;
-			}
-			if (read_not_write == 0)
-				gi_dma_config_bits |= Gi_DMA_Write_Bit;
-			ni_tio_set_bits(counter,
-					NITIO_Gi_DMA_Config_Reg(counter->
-								counter_index),
-					Gi_DMA_Enable_Bit | Gi_DMA_Int_Bit |
-					Gi_DMA_Write_Bit, gi_dma_config_bits);
-		}
+		if (enable)
+			bits |= GI_DMA_ENABLE | GI_DMA_INT_ENA;
+		if (!read)
+			bits |= GI_DMA_WRITE;
+		ni_tio_set_bits(counter, NITIO_DMA_CFG_REG(cidx), mask, bits);
 		break;
 	}
 }
 
 static int ni_tio_input_inttrig(struct comedi_device *dev,
 				struct comedi_subdevice *s,
-				unsigned int trignum)
+				unsigned int trig_num)
 {
-	unsigned long flags;
-	int retval = 0;
 	struct ni_gpct *counter = s->private;
+	struct comedi_cmd *cmd = &s->async->cmd;
+	unsigned long flags;
+	int ret = 0;
 
-	BUG_ON(counter == NULL);
-	if (trignum != 0)
+	if (trig_num != cmd->start_src)
 		return -EINVAL;
 
 	spin_lock_irqsave(&counter->lock, flags);
 	if (counter->mite_chan)
 		mite_dma_arm(counter->mite_chan);
 	else
-		retval = -EIO;
+		ret = -EIO;
 	spin_unlock_irqrestore(&counter->lock, flags);
-	if (retval < 0)
-		return retval;
-	retval = ni_tio_arm(counter, 1, NI_GPCT_ARM_IMMEDIATE);
+	if (ret < 0)
+		return ret;
+	ret = ni_tio_arm(counter, 1, NI_GPCT_ARM_IMMEDIATE);
 	s->async->inttrig = NULL;
 
-	return retval;
+	return ret;
 }
 
-static int ni_tio_input_cmd(struct ni_gpct *counter, struct comedi_async *async)
+static int ni_tio_input_cmd(struct comedi_subdevice *s)
 {
+	struct ni_gpct *counter = s->private;
 	struct ni_gpct_device *counter_dev = counter->counter_dev;
+	unsigned cidx = counter->counter_index;
+	struct comedi_async *async = s->async;
 	struct comedi_cmd *cmd = &async->cmd;
-	int retval = 0;
+	int ret = 0;
 
 	/* write alloc the entire buffer */
-	comedi_buf_write_alloc(async, async->prealloc_bufsz);
+	comedi_buf_write_alloc(s, async->prealloc_bufsz);
 	counter->mite_chan->dir = COMEDI_INPUT;
 	switch (counter_dev->variant) {
 	case ni_gpct_variant_m_series:
@@ -140,51 +135,43 @@ static int ni_tio_input_cmd(struct ni_gpct *counter, struct comedi_async *async)
 		BUG();
 		break;
 	}
-	ni_tio_set_bits(counter, NITIO_Gi_Command_Reg(counter->counter_index),
-			Gi_Save_Trace_Bit, 0);
-	ni_tio_configure_dma(counter, 1, 1);
-	switch (cmd->start_src) {
-	case TRIG_NOW:
-		async->inttrig = NULL;
-		mite_dma_arm(counter->mite_chan);
-		retval = ni_tio_arm(counter, 1, NI_GPCT_ARM_IMMEDIATE);
-		break;
-	case TRIG_INT:
+	ni_tio_set_bits(counter, NITIO_CMD_REG(cidx), GI_SAVE_TRACE, 0);
+	ni_tio_configure_dma(counter, true, true);
+
+	if (cmd->start_src == TRIG_INT) {
 		async->inttrig = &ni_tio_input_inttrig;
-		break;
-	case TRIG_EXT:
+	} else {	/* TRIG_NOW || TRIG_EXT || TRIG_OTHER */
 		async->inttrig = NULL;
 		mite_dma_arm(counter->mite_chan);
-		retval = ni_tio_arm(counter, 1, cmd->start_arg);
-		break;
-	case TRIG_OTHER:
-		async->inttrig = NULL;
-		mite_dma_arm(counter->mite_chan);
-		break;
-	default:
-		BUG();
-		break;
+
+		if (cmd->start_src == TRIG_NOW)
+			ret = ni_tio_arm(counter, 1, NI_GPCT_ARM_IMMEDIATE);
+		else if (cmd->start_src == TRIG_EXT)
+			ret = ni_tio_arm(counter, 1, cmd->start_arg);
 	}
-	return retval;
+	return ret;
 }
 
-static int ni_tio_output_cmd(struct ni_gpct *counter,
-			     struct comedi_async *async)
+static int ni_tio_output_cmd(struct comedi_subdevice *s)
 {
+	struct ni_gpct *counter = s->private;
+
 	dev_err(counter->counter_dev->dev->class_dev,
 		"output commands not yet implemented.\n");
 	return -ENOTSUPP;
 
 	counter->mite_chan->dir = COMEDI_OUTPUT;
 	mite_prep_dma(counter->mite_chan, 32, 32);
-	ni_tio_configure_dma(counter, 1, 0);
+	ni_tio_configure_dma(counter, true, false);
 	mite_dma_arm(counter->mite_chan);
 	return ni_tio_arm(counter, 1, NI_GPCT_ARM_IMMEDIATE);
 }
 
-static int ni_tio_cmd_setup(struct ni_gpct *counter, struct comedi_async *async)
+static int ni_tio_cmd_setup(struct comedi_subdevice *s)
 {
-	struct comedi_cmd *cmd = &async->cmd;
+	struct comedi_cmd *cmd = &s->async->cmd;
+	struct ni_gpct *counter = s->private;
+	unsigned cidx = counter->counter_index;
 	int set_gate_source = 0;
 	unsigned gate_source;
 	int retval = 0;
@@ -199,19 +186,17 @@ static int ni_tio_cmd_setup(struct ni_gpct *counter, struct comedi_async *async)
 	if (set_gate_source)
 		retval = ni_tio_set_gate_src(counter, 0, gate_source);
 	if (cmd->flags & TRIG_WAKE_EOS) {
-		ni_tio_set_bits(counter,
-				NITIO_Gi_Interrupt_Enable_Reg(counter->
-							      counter_index),
-				Gi_Gate_Interrupt_Enable_Bit(counter->
-							     counter_index),
-				Gi_Gate_Interrupt_Enable_Bit(counter->
-							     counter_index));
+		ni_tio_set_bits(counter, NITIO_INT_ENA_REG(cidx),
+				GI_GATE_INTERRUPT_ENABLE(cidx),
+				GI_GATE_INTERRUPT_ENABLE(cidx));
 	}
 	return retval;
 }
 
-int ni_tio_cmd(struct ni_gpct *counter, struct comedi_async *async)
+int ni_tio_cmd(struct comedi_device *dev, struct comedi_subdevice *s)
 {
+	struct ni_gpct *counter = s->private;
+	struct comedi_async *async = s->async;
 	struct comedi_cmd *cmd = &async->cmd;
 	int retval = 0;
 	unsigned long flags;
@@ -224,12 +209,12 @@ int ni_tio_cmd(struct ni_gpct *counter, struct comedi_async *async)
 			"Interrupt-driven commands not yet implemented.\n");
 		retval = -EIO;
 	} else {
-		retval = ni_tio_cmd_setup(counter, async);
+		retval = ni_tio_cmd_setup(s);
 		if (retval == 0) {
 			if (cmd->flags & CMDF_WRITE)
-				retval = ni_tio_output_cmd(counter, async);
+				retval = ni_tio_output_cmd(s);
 			else
-				retval = ni_tio_input_cmd(counter, async);
+				retval = ni_tio_input_cmd(s);
 		}
 	}
 	spin_unlock_irqrestore(&counter->lock, flags);
@@ -237,8 +222,11 @@ int ni_tio_cmd(struct ni_gpct *counter, struct comedi_async *async)
 }
 EXPORT_SYMBOL_GPL(ni_tio_cmd);
 
-int ni_tio_cmdtest(struct ni_gpct *counter, struct comedi_cmd *cmd)
+int ni_tio_cmdtest(struct comedi_device *dev,
+		   struct comedi_subdevice *s,
+		   struct comedi_cmd *cmd)
 {
+	struct ni_gpct *counter = s->private;
 	int err = 0;
 	unsigned int sources;
 
@@ -275,8 +263,16 @@ int ni_tio_cmdtest(struct ni_gpct *counter, struct comedi_cmd *cmd)
 
 	/* Step 3: check if arguments are trivially valid */
 
-	if (cmd->start_src != TRIG_EXT)
+	switch (cmd->start_src) {
+	case TRIG_NOW:
+	case TRIG_INT:
+	case TRIG_OTHER:
 		err |= cfc_check_trigger_arg_is(&cmd->start_arg, 0);
+		break;
+	case TRIG_EXT:
+		/* start_arg is the start_trigger passed to ni_tio_arm() */
+		break;
+	}
 
 	if (cmd->scan_begin_src != TRIG_EXT)
 		err |= cfc_check_trigger_arg_is(&cmd->scan_begin_arg, 0);
@@ -301,6 +297,7 @@ EXPORT_SYMBOL_GPL(ni_tio_cmdtest);
 
 int ni_tio_cancel(struct ni_gpct *counter)
 {
+	unsigned cidx = counter->counter_index;
 	unsigned long flags;
 
 	ni_tio_arm(counter, 0, 0);
@@ -308,12 +305,10 @@ int ni_tio_cancel(struct ni_gpct *counter)
 	if (counter->mite_chan)
 		mite_dma_disarm(counter->mite_chan);
 	spin_unlock_irqrestore(&counter->lock, flags);
-	ni_tio_configure_dma(counter, 0, 0);
+	ni_tio_configure_dma(counter, false, false);
 
-	ni_tio_set_bits(counter,
-			NITIO_Gi_Interrupt_Enable_Reg(counter->counter_index),
-			Gi_Gate_Interrupt_Enable_Bit(counter->counter_index),
-			0x0);
+	ni_tio_set_bits(counter, NITIO_INT_ENA_REG(cidx),
+			GI_GATE_INTERRUPT_ENABLE(cidx), 0x0);
 	return 0;
 }
 EXPORT_SYMBOL_GPL(ni_tio_cancel);
@@ -333,7 +328,6 @@ static int should_ack_gate(struct ni_gpct *counter)
 	    in register-level manual) */
 	case ni_gpct_variant_660x:
 		return 1;
-		break;
 	case ni_gpct_variant_e_series:
 		spin_lock_irqsave(&counter->lock, flags);
 		{
@@ -349,18 +343,17 @@ static int should_ack_gate(struct ni_gpct *counter)
 	return retval;
 }
 
-void ni_tio_acknowledge_and_confirm(struct ni_gpct *counter, int *gate_error,
-				    int *tc_error, int *perm_stale_data,
-				    int *stale_data)
+static void ni_tio_acknowledge_and_confirm(struct ni_gpct *counter,
+					   int *gate_error,
+					   int *tc_error,
+					   int *perm_stale_data,
+					   int *stale_data)
 {
+	unsigned cidx = counter->counter_index;
 	const unsigned short gxx_status = read_register(counter,
-							NITIO_Gxx_Status_Reg
-							(counter->
-							 counter_index));
+						NITIO_SHARED_STATUS_REG(cidx));
 	const unsigned short gi_status = read_register(counter,
-						       NITIO_Gi_Status_Reg
-						       (counter->
-							counter_index));
+						NITIO_STATUS_REG(cidx));
 	unsigned ack = 0;
 
 	if (gate_error)
@@ -372,8 +365,8 @@ void ni_tio_acknowledge_and_confirm(struct ni_gpct *counter, int *gate_error,
 	if (stale_data)
 		*stale_data = 0;
 
-	if (gxx_status & Gi_Gate_Error_Bit(counter->counter_index)) {
-		ack |= Gi_Gate_Error_Confirm_Bit(counter->counter_index);
+	if (gxx_status & GI_GATE_ERROR(cidx)) {
+		ack |= GI_GATE_ERROR_CONFIRM(cidx);
 		if (gate_error) {
 			/*660x don't support automatic acknowledgement
 			  of gate interrupt via dma read/write
@@ -384,33 +377,27 @@ void ni_tio_acknowledge_and_confirm(struct ni_gpct *counter, int *gate_error,
 			}
 		}
 	}
-	if (gxx_status & Gi_TC_Error_Bit(counter->counter_index)) {
-		ack |= Gi_TC_Error_Confirm_Bit(counter->counter_index);
+	if (gxx_status & GI_TC_ERROR(cidx)) {
+		ack |= GI_TC_ERROR_CONFIRM(cidx);
 		if (tc_error)
 			*tc_error = 1;
 	}
-	if (gi_status & Gi_TC_Bit)
-		ack |= Gi_TC_Interrupt_Ack_Bit;
-	if (gi_status & Gi_Gate_Interrupt_Bit) {
+	if (gi_status & GI_TC)
+		ack |= GI_TC_INTERRUPT_ACK;
+	if (gi_status & GI_GATE_INTERRUPT) {
 		if (should_ack_gate(counter))
-			ack |= Gi_Gate_Interrupt_Ack_Bit;
+			ack |= GI_GATE_INTERRUPT_ACK;
 	}
 	if (ack)
-		write_register(counter, ack,
-			       NITIO_Gi_Interrupt_Acknowledge_Reg
-			       (counter->counter_index));
-	if (ni_tio_get_soft_copy
-	    (counter,
-	     NITIO_Gi_Mode_Reg(counter->counter_index)) &
-	    Gi_Loading_On_Gate_Bit) {
-		if (gxx_status & Gi_Stale_Data_Bit(counter->counter_index)) {
+		write_register(counter, ack, NITIO_INT_ACK_REG(cidx));
+	if (ni_tio_get_soft_copy(counter, NITIO_MODE_REG(cidx)) &
+	    GI_LOADING_ON_GATE) {
+		if (gxx_status & GI_STALE_DATA(cidx)) {
 			if (stale_data)
 				*stale_data = 1;
 		}
-		if (read_register(counter,
-				  NITIO_Gxx_Joint_Status2_Reg
-				  (counter->counter_index)) &
-		    Gi_Permanent_Stale_Bit(counter->counter_index)) {
+		if (read_register(counter, NITIO_STATUS2_REG(cidx)) &
+		    GI_PERMANENT_STALE(cidx)) {
 			dev_info(counter->counter_dev->dev->class_dev,
 				 "%s: Gi_Permanent_Stale_Data detected.\n",
 				 __func__);
@@ -419,11 +406,17 @@ void ni_tio_acknowledge_and_confirm(struct ni_gpct *counter, int *gate_error,
 		}
 	}
 }
-EXPORT_SYMBOL_GPL(ni_tio_acknowledge_and_confirm);
+
+void ni_tio_acknowledge(struct ni_gpct *counter)
+{
+	ni_tio_acknowledge_and_confirm(counter, NULL, NULL, NULL, NULL);
+}
+EXPORT_SYMBOL_GPL(ni_tio_acknowledge);
 
 void ni_tio_handle_interrupt(struct ni_gpct *counter,
 			     struct comedi_subdevice *s)
 {
+	unsigned cidx = counter->counter_index;
 	unsigned gpct_mite_status;
 	unsigned long flags;
 	int gate_error;
@@ -442,9 +435,8 @@ void ni_tio_handle_interrupt(struct ni_gpct *counter,
 	switch (counter->counter_dev->variant) {
 	case ni_gpct_variant_m_series:
 	case ni_gpct_variant_660x:
-		if (read_register(counter,
-				NITIO_Gi_DMA_Status_Reg
-				(counter->counter_index)) & Gi_DRQ_Error_Bit) {
+		if (read_register(counter, NITIO_DMA_STATUS_REG(cidx)) &
+		    GI_DRQ_ERROR) {
 			dev_notice(counter->counter_dev->dev->class_dev,
 				   "%s: Gi_DRQ_Error detected.\n", __func__);
 			s->async->events |= COMEDI_CB_OVERFLOW;
@@ -464,7 +456,7 @@ void ni_tio_handle_interrupt(struct ni_gpct *counter,
 		       counter->mite_chan->mite->mite_io_addr +
 		       MITE_CHOR(counter->mite_chan->channel));
 	}
-	mite_sync_input_dma(counter->mite_chan, s->async);
+	mite_sync_input_dma(counter->mite_chan, s);
 	spin_unlock_irqrestore(&counter->lock, flags);
 }
 EXPORT_SYMBOL_GPL(ni_tio_handle_interrupt);
@@ -484,11 +476,13 @@ static int __init ni_tiocmd_init_module(void)
 {
 	return 0;
 }
-
 module_init(ni_tiocmd_init_module);
 
 static void __exit ni_tiocmd_cleanup_module(void)
 {
 }
-
 module_exit(ni_tiocmd_cleanup_module);
+
+MODULE_AUTHOR("Comedi <comedi@comedi.org>");
+MODULE_DESCRIPTION("Comedi command support for NI general-purpose counters");
+MODULE_LICENSE("GPL");

@@ -44,9 +44,9 @@
 #include <linux/module.h>
 #include <linux/init.h>
 
-#include <obd_class.h>
-#include <lustre_fid.h>
-#include <lustre_log.h>
+#include "../include/obd_class.h"
+#include "../include/lustre_fid.h"
+#include "../include/lustre_log.h"
 
 /* This is slightly more than the number of records that can fit into a
  * single llog file, because the llog_log_header takes up some of the
@@ -939,13 +939,17 @@ cleanup_ctxt:
 	return rc;
 }
 
-#ifdef LPROCFS
-static struct lprocfs_vars lprocfs_llog_test_obd_vars[] = { {0} };
-static struct lprocfs_vars lprocfs_llog_test_module_vars[] = { {0} };
+#if defined (CONFIG_PROC_FS)
+static struct lprocfs_vars lprocfs_llog_test_obd_vars[] = { { NULL } };
+static struct lprocfs_vars lprocfs_llog_test_module_vars[] = { { NULL } };
 static void lprocfs_llog_test_init_vars(struct lprocfs_static_vars *lvars)
 {
     lvars->module_vars  = lprocfs_llog_test_module_vars;
     lvars->obd_vars     = lprocfs_llog_test_obd_vars;
+}
+#else
+static void lprocfs_llog_test_init_vars(struct lprocfs_static_vars *lvars)
+{
 }
 #endif
 
@@ -1048,7 +1052,7 @@ static struct obd_ops llog_obd_ops = {
 
 static int __init llog_test_init(void)
 {
-	struct lprocfs_static_vars lvars;
+	struct lprocfs_static_vars uninitialized_var(lvars);
 
 	lprocfs_llog_test_init_vars(&lvars);
 	return class_register_type(&llog_obd_ops, NULL,

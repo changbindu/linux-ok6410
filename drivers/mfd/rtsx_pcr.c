@@ -50,13 +50,14 @@ static struct mfd_cell rtsx_pcr_cells[] = {
 	},
 };
 
-static DEFINE_PCI_DEVICE_TABLE(rtsx_pci_ids) = {
+static const struct pci_device_id rtsx_pci_ids[] = {
 	{ PCI_DEVICE(0x10EC, 0x5209), PCI_CLASS_OTHERS << 16, 0xFF0000 },
 	{ PCI_DEVICE(0x10EC, 0x5229), PCI_CLASS_OTHERS << 16, 0xFF0000 },
 	{ PCI_DEVICE(0x10EC, 0x5289), PCI_CLASS_OTHERS << 16, 0xFF0000 },
 	{ PCI_DEVICE(0x10EC, 0x5227), PCI_CLASS_OTHERS << 16, 0xFF0000 },
 	{ PCI_DEVICE(0x10EC, 0x5249), PCI_CLASS_OTHERS << 16, 0xFF0000 },
 	{ PCI_DEVICE(0x10EC, 0x5287), PCI_CLASS_OTHERS << 16, 0xFF0000 },
+	{ PCI_DEVICE(0x10EC, 0x5286), PCI_CLASS_OTHERS << 16, 0xFF0000 },
 	{ 0, }
 };
 
@@ -336,40 +337,64 @@ static void rtsx_pci_add_sg_tbl(struct rtsx_pcr *pcr,
 int rtsx_pci_transfer_data(struct rtsx_pcr *pcr, struct scatterlist *sglist,
 		int num_sg, bool read, int timeout)
 {
-	struct completion trans_done;
-	u8 dir;
-	int err = 0, i, count;
-	long timeleft;
-	unsigned long flags;
-	struct scatterlist *sg;
-	enum dma_data_direction dma_dir;
-	u32 val;
-	dma_addr_t addr;
-	unsigned int len;
+	int err = 0, count;
 
 	dev_dbg(&(pcr->pci->dev), "--> %s: num_sg = %d\n", __func__, num_sg);
+	count = rtsx_pci_dma_map_sg(pcr, sglist, num_sg, read);
+	if (count < 1)
+		return -EINVAL;
+	dev_dbg(&(pcr->pci->dev), "DMA mapping count: %d\n", count);
 
-	/* don't transfer data during abort processing */
+	err = rtsx_pci_dma_transfer(pcr, sglist, count, read, timeout);
+
+	rtsx_pci_dma_unmap_sg(pcr, sglist, num_sg, read);
+
+	return err;
+}
+EXPORT_SYMBOL_GPL(rtsx_pci_transfer_data);
+
+int rtsx_pci_dma_map_sg(struct rtsx_pcr *pcr, struct scatterlist *sglist,
+		int num_sg, bool read)
+{
+	enum dma_data_direction dir = read ? DMA_FROM_DEVICE : DMA_TO_DEVICE;
+
 	if (pcr->remove_pci)
 		return -EINVAL;
 
 	if ((sglist == NULL) || (num_sg <= 0))
 		return -EINVAL;
 
-	if (read) {
-		dir = DEVICE_TO_HOST;
-		dma_dir = DMA_FROM_DEVICE;
-	} else {
-		dir = HOST_TO_DEVICE;
-		dma_dir = DMA_TO_DEVICE;
-	}
+	return dma_map_sg(&(pcr->pci->dev), sglist, num_sg, dir);
+}
+EXPORT_SYMBOL_GPL(rtsx_pci_dma_map_sg);
 
-	count = dma_map_sg(&(pcr->pci->dev), sglist, num_sg, dma_dir);
-	if (count < 1) {
-		dev_err(&(pcr->pci->dev), "scatterlist map failed\n");
+void rtsx_pci_dma_unmap_sg(struct rtsx_pcr *pcr, struct scatterlist *sglist,
+		int num_sg, bool read)
+{
+	enum dma_data_direction dir = read ? DMA_FROM_DEVICE : DMA_TO_DEVICE;
+
+	dma_unmap_sg(&(pcr->pci->dev), sglist, num_sg, dir);
+}
+EXPORT_SYMBOL_GPL(rtsx_pci_dma_unmap_sg);
+
+int rtsx_pci_dma_transfer(struct rtsx_pcr *pcr, struct scatterlist *sglist,
+		int count, bool read, int timeout)
+{
+	struct completion trans_done;
+	struct scatterlist *sg;
+	dma_addr_t addr;
+	long timeleft;
+	unsigned long flags;
+	unsigned int len;
+	int i, err = 0;
+	u32 val;
+	u8 dir = read ? DEVICE_TO_HOST : HOST_TO_DEVICE;
+
+	if (pcr->remove_pci)
+		return -ENODEV;
+
+	if ((sglist == NULL) || (count < 1))
 		return -EINVAL;
-	}
-	dev_dbg(&(pcr->pci->dev), "DMA mapping count: %d\n", count);
 
 	val = ((u32)(dir & 0x01) << 29) | TRIG_DMA | ADMA_MODE;
 	pcr->sgi = 0;
@@ -399,20 +424,16 @@ int rtsx_pci_transfer_data(struct rtsx_pcr *pcr, struct scatterlist *sglist,
 	}
 
 	spin_lock_irqsave(&pcr->lock, flags);
-
 	if (pcr->trans_result == TRANS_RESULT_FAIL)
 		err = -EINVAL;
 	else if (pcr->trans_result == TRANS_NO_DEVICE)
 		err = -ENODEV;
-
 	spin_unlock_irqrestore(&pcr->lock, flags);
 
 out:
 	spin_lock_irqsave(&pcr->lock, flags);
 	pcr->done = NULL;
 	spin_unlock_irqrestore(&pcr->lock, flags);
-
-	dma_unmap_sg(&(pcr->pci->dev), sglist, num_sg, dma_dir);
 
 	if ((err < 0) && (err != -ENODEV))
 		rtsx_pci_stop_cmd(pcr);
@@ -422,7 +443,7 @@ out:
 
 	return err;
 }
-EXPORT_SYMBOL_GPL(rtsx_pci_transfer_data);
+EXPORT_SYMBOL_GPL(rtsx_pci_dma_transfer);
 
 int rtsx_pci_read_ppbuf(struct rtsx_pcr *pcr, u8 *buf, int buf_len)
 {
@@ -1061,6 +1082,10 @@ static int rtsx_pci_init_chip(struct rtsx_pcr *pcr)
 	case 0x5287:
 		rtl8411b_init_params(pcr);
 		break;
+
+	case 0x5286:
+		rtl8402_init_params(pcr);
+		break;
 	}
 
 	dev_dbg(&(pcr->pci->dev), "PID: 0x%04x, IC version: 0x%02x\n",
@@ -1228,8 +1253,14 @@ static void rtsx_pci_remove(struct pci_dev *pcidev)
 
 	pcr->remove_pci = true;
 
-	cancel_delayed_work(&pcr->carddet_work);
-	cancel_delayed_work(&pcr->idle_work);
+	/* Disable interrupts at the pcr level */
+	spin_lock_irq(&pcr->lock);
+	rtsx_pci_writel(pcr, RTSX_BIER, 0);
+	pcr->bier = 0;
+	spin_unlock_irq(&pcr->lock);
+
+	cancel_delayed_work_sync(&pcr->carddet_work);
+	cancel_delayed_work_sync(&pcr->idle_work);
 
 	mfd_remove_devices(&pcidev->dev);
 

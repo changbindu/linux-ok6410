@@ -2,8 +2,9 @@
 #include "evsel.h"
 #include "cpumap.h"
 #include "parse-events.h"
-#include "fs.h"
+#include <api/fs/fs.h>
 #include "util.h"
+#include "cloexec.h"
 
 typedef void (*setup_probe_fn_t)(struct perf_evsel *evsel);
 
@@ -11,6 +12,7 @@ static int perf_do_probe_api(setup_probe_fn_t fn, int cpu, const char *str)
 {
 	struct perf_evlist *evlist;
 	struct perf_evsel *evsel;
+	unsigned long flags = perf_event_open_cloexec_flag();
 	int err = -EAGAIN, fd;
 
 	evlist = perf_evlist__new();
@@ -22,14 +24,14 @@ static int perf_do_probe_api(setup_probe_fn_t fn, int cpu, const char *str)
 
 	evsel = perf_evlist__first(evlist);
 
-	fd = sys_perf_event_open(&evsel->attr, -1, cpu, -1, 0);
+	fd = sys_perf_event_open(&evsel->attr, -1, cpu, -1, flags);
 	if (fd < 0)
 		goto out_delete;
 	close(fd);
 
 	fn(evsel);
 
-	fd = sys_perf_event_open(&evsel->attr, -1, cpu, -1, 0);
+	fd = sys_perf_event_open(&evsel->attr, -1, cpu, -1, flags);
 	if (fd < 0) {
 		if (errno == EINVAL)
 			err = -EINVAL;
@@ -69,16 +71,26 @@ static void perf_probe_sample_identifier(struct perf_evsel *evsel)
 	evsel->attr.sample_type |= PERF_SAMPLE_IDENTIFIER;
 }
 
+static void perf_probe_comm_exec(struct perf_evsel *evsel)
+{
+	evsel->attr.comm_exec = 1;
+}
+
 bool perf_can_sample_identifier(void)
 {
 	return perf_probe_api(perf_probe_sample_identifier);
 }
 
-void perf_evlist__config(struct perf_evlist *evlist,
-			struct perf_record_opts *opts)
+static bool perf_can_comm_exec(void)
+{
+	return perf_probe_api(perf_probe_comm_exec);
+}
+
+void perf_evlist__config(struct perf_evlist *evlist, struct record_opts *opts)
 {
 	struct perf_evsel *evsel;
 	bool use_sample_identifier = false;
+	bool use_comm_exec;
 
 	/*
 	 * Set the evsel leader links before we configure attributes,
@@ -90,19 +102,24 @@ void perf_evlist__config(struct perf_evlist *evlist,
 	if (evlist->cpus->map[0] < 0)
 		opts->no_inherit = true;
 
-	list_for_each_entry(evsel, &evlist->entries, node)
+	use_comm_exec = perf_can_comm_exec();
+
+	evlist__for_each(evlist, evsel) {
 		perf_evsel__config(evsel, opts);
+		if (!evsel->idx && use_comm_exec)
+			evsel->attr.comm_exec = 1;
+	}
 
 	if (evlist->nr_entries > 1) {
 		struct perf_evsel *first = perf_evlist__first(evlist);
 
-		list_for_each_entry(evsel, &evlist->entries, node) {
+		evlist__for_each(evlist, evsel) {
 			if (evsel->attr.sample_type == first->attr.sample_type)
 				continue;
 			use_sample_identifier = perf_can_sample_identifier();
 			break;
 		}
-		list_for_each_entry(evsel, &evlist->entries, node)
+		evlist__for_each(evlist, evsel)
 			perf_evsel__set_sample_id(evsel, use_sample_identifier);
 	}
 
@@ -123,7 +140,7 @@ static int get_max_rate(unsigned int *rate)
 	return filename__read_int(path, (int *) rate);
 }
 
-static int perf_record_opts__config_freq(struct perf_record_opts *opts)
+static int record_opts__config_freq(struct record_opts *opts)
 {
 	bool user_freq = opts->user_freq != UINT_MAX;
 	unsigned int max_rate;
@@ -173,7 +190,45 @@ static int perf_record_opts__config_freq(struct perf_record_opts *opts)
 	return 0;
 }
 
-int perf_record_opts__config(struct perf_record_opts *opts)
+int record_opts__config(struct record_opts *opts)
 {
-	return perf_record_opts__config_freq(opts);
+	return record_opts__config_freq(opts);
+}
+
+bool perf_evlist__can_select_event(struct perf_evlist *evlist, const char *str)
+{
+	struct perf_evlist *temp_evlist;
+	struct perf_evsel *evsel;
+	int err, fd, cpu;
+	bool ret = false;
+
+	temp_evlist = perf_evlist__new();
+	if (!temp_evlist)
+		return false;
+
+	err = parse_events(temp_evlist, str);
+	if (err)
+		goto out_delete;
+
+	evsel = perf_evlist__last(temp_evlist);
+
+	if (!evlist || cpu_map__empty(evlist->cpus)) {
+		struct cpu_map *cpus = cpu_map__new(NULL);
+
+		cpu =  cpus ? cpus->map[0] : 0;
+		cpu_map__delete(cpus);
+	} else {
+		cpu = evlist->cpus->map[0];
+	}
+
+	fd = sys_perf_event_open(&evsel->attr, -1, cpu, -1,
+				 perf_event_open_cloexec_flag());
+	if (fd >= 0) {
+		close(fd);
+		ret = true;
+	}
+
+out_delete:
+	perf_evlist__delete(temp_evlist);
+	return ret;
 }

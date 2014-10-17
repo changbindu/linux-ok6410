@@ -286,7 +286,11 @@ int __meminit firmware_map_add_hotplug(u64 start, u64 end, const char *type)
 {
 	struct firmware_map_entry *entry;
 
-	entry = firmware_map_find_entry_bootmem(start, end, type);
+	entry = firmware_map_find_entry(start, end - 1, type);
+	if (entry)
+		return 0;
+
+	entry = firmware_map_find_entry_bootmem(start, end - 1, type);
 	if (!entry) {
 		entry = kzalloc(sizeof(struct firmware_map_entry), GFP_ATOMIC);
 		if (!entry)
@@ -324,7 +328,7 @@ int __init firmware_map_add_early(u64 start, u64 end, const char *type)
 {
 	struct firmware_map_entry *entry;
 
-	entry = alloc_bootmem(sizeof(struct firmware_map_entry));
+	entry = memblock_virt_alloc(sizeof(struct firmware_map_entry), 0);
 	if (WARN_ON(!entry))
 		return -ENOMEM;
 

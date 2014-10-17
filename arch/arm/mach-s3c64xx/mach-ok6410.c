@@ -19,6 +19,7 @@
 #include <linux/init.h>
 #include <linux/input.h>
 #include <linux/serial_core.h>
+#include <linux/serial_s3c.h>
 #include <linux/platform_device.h>
 #include <linux/io.h>
 #include <linux/i2c.h>
@@ -62,14 +63,14 @@
 #include <asm/irq.h>
 #include <asm/mach-types.h>
 
-#include <plat/regs-serial.h>
 #include <mach/regs-gpio.h>
+#include <mach/gpio-samsung.h>
+
 #include <linux/platform_data/ata-samsung_cf.h>
 #include <linux/platform_data/i2c-s3c2410.h>
 #include <plat/fb.h>
 #include <plat/gpio-cfg.h>
 
-#include <plat/clock.h>
 #include <plat/devs.h>
 #include <plat/cpu.h>
 #include <plat/adc.h>
@@ -563,8 +564,9 @@ static struct platform_device *ok6410_devices[] __initdata = {
 	&s3c_device_i2c0,
 	&s3c_device_i2c1,
 	&s3c_device_fb,
-	&s3c_device_usb_hsotg,
 	&s3c_device_ohci,
+	&samsung_device_pwm,
+	&s3c_device_usb_hsotg,
 	&s3c64xx_device_iisv4,
 	&ok6410_device_led,
 	&ok6410_gpio_button_device,
@@ -945,7 +947,7 @@ static void __init ok6410_map_io(void)
 	u32 tmp;
 
 	s3c64xx_init_io(ok6410_iodesc, ARRAY_SIZE(ok6410_iodesc));
-	s3c24xx_init_clocks(12000000);
+	s3c64xx_set_xtal_freq(12000000);
 	s3c24xx_init_uarts(ok6410_uartcfgs, ARRAY_SIZE(ok6410_uartcfgs));
 	samsung_set_timer_source(SAMSUNG_PWM3, SAMSUNG_PWM4);
 

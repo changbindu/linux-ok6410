@@ -46,10 +46,10 @@
 #ifndef LOV_CL_INTERNAL_H
 #define LOV_CL_INTERNAL_H
 
-# include <linux/libcfs/libcfs.h>
+#include "../../include/linux/libcfs/libcfs.h"
 
-#include <obd.h>
-#include <cl_object.h>
+#include "../include/obd.h"
+#include "../include/cl_object.h"
 #include "lov_internal.h"
 
 /** \defgroup lov lov
@@ -167,6 +167,22 @@ enum lov_layout_type {
 	LLT_RELEASED,	/** file with no objects (data in HSM) */
 	LLT_NR
 };
+
+static inline char *llt2str(enum lov_layout_type llt)
+{
+	switch (llt) {
+	case LLT_EMPTY:
+		return "EMPTY";
+	case LLT_RAID0:
+		return "RAID0";
+	case LLT_RELEASED:
+		return "RELEASED";
+	case LLT_NR:
+		LBUG();
+	}
+	LBUG();
+	return "";
+}
 
 /**
  * lov-specific file state.

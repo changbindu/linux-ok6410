@@ -38,7 +38,7 @@
 
 static const char mic_driver_name[] = "mic";
 
-static DEFINE_PCI_DEVICE_TABLE(mic_pci_tbl) = {
+static const struct pci_device_id mic_pci_tbl[] = {
 	{PCI_DEVICE(PCI_VENDOR_ID_INTEL, MIC_X100_PCI_DEVICE_2250)},
 	{PCI_DEVICE(PCI_VENDOR_ID_INTEL, MIC_X100_PCI_DEVICE_2251)},
 	{PCI_DEVICE(PCI_VENDOR_ID_INTEL, MIC_X100_PCI_DEVICE_2252)},
@@ -115,7 +115,7 @@ static irqreturn_t mic_shutdown_db(int irq, void *data)
 	struct mic_device *mdev = data;
 	struct mic_bootparam *bootparam = mdev->dp;
 
-	mdev->ops->ack_interrupt(mdev);
+	mdev->ops->intr_workarounds(mdev);
 
 	switch (bootparam->shutdown_status) {
 	case MIC_HALTED:
@@ -389,8 +389,9 @@ static int mic_probe(struct pci_dev *pdev,
 	mutex_lock(&mdev->mic_mutex);
 
 	mdev->shutdown_db = mic_next_db(mdev);
-	mdev->shutdown_cookie = mic_request_irq(mdev, mic_shutdown_db,
-		"shutdown-interrupt", mdev, mdev->shutdown_db, MIC_INTR_DB);
+	mdev->shutdown_cookie = mic_request_threaded_irq(mdev, mic_shutdown_db,
+					NULL, "shutdown-interrupt", mdev,
+					mdev->shutdown_db, MIC_INTR_DB);
 	if (IS_ERR(mdev->shutdown_cookie)) {
 		rc = PTR_ERR(mdev->shutdown_cookie);
 		mutex_unlock(&mdev->mic_mutex);

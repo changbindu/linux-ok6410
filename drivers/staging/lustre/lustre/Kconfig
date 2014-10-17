@@ -55,6 +55,7 @@ config LUSTRE_TRANSLATE_ERRNOS
 	default y
 
 config LUSTRE_LLITE_LLOOP
-	bool "Lustre virtual block device"
+	tristate "Lustre virtual block device"
 	depends on LUSTRE_FS && BLOCK
+	depends on !PPC_64K_PAGES && !ARM64_64K_PAGES
 	default m

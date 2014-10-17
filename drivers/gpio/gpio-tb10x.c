@@ -222,7 +222,7 @@ static int tb10x_gpio_probe(struct platform_device *pdev)
 	tb10x_gpio->gc.free		= tb10x_gpio_free;
 	tb10x_gpio->gc.base		= -1;
 	tb10x_gpio->gc.ngpio		= ngpio;
-	tb10x_gpio->gc.can_sleep	= 0;
+	tb10x_gpio->gc.can_sleep	= false;
 
 
 	ret = gpiochip_add(&tb10x_gpio->gc);
@@ -291,7 +291,6 @@ fail_ioremap:
 static int __exit tb10x_gpio_remove(struct platform_device *pdev)
 {
 	struct tb10x_gpio *tb10x_gpio = platform_get_drvdata(pdev);
-	int ret;
 
 	if (tb10x_gpio->gc.to_irq) {
 		irq_remove_generic_chip(tb10x_gpio->domain->gc->gc[0],
@@ -300,9 +299,7 @@ static int __exit tb10x_gpio_remove(struct platform_device *pdev)
 		irq_domain_remove(tb10x_gpio->domain);
 		free_irq(tb10x_gpio->irq, tb10x_gpio);
 	}
-	ret = gpiochip_remove(&tb10x_gpio->gc);
-	if (ret)
-		return ret;
+	gpiochip_remove(&tb10x_gpio->gc);
 
 	return 0;
 }
@@ -318,7 +315,7 @@ static struct platform_driver tb10x_gpio_driver = {
 	.remove		= tb10x_gpio_remove,
 	.driver = {
 		.name	= "tb10x-gpio",
-		.of_match_table = of_match_ptr(tb10x_gpio_dt_ids),
+		.of_match_table = tb10x_gpio_dt_ids,
 		.owner	= THIS_MODULE,
 	}
 };

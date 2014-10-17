@@ -37,11 +37,10 @@
 #ifndef _OBD_SUPPORT
 #define _OBD_SUPPORT
 
-#include <linux/libcfs/libcfs.h>
-#include <lvfs.h>
-#include <lprocfs_status.h>
-
-#include <linux/obd_support.h>
+#include "../../include/linux/libcfs/libcfs.h"
+#include "lvfs.h"
+#include "lprocfs_status.h"
+#include "linux/obd_support.h"
 
 /* global variables */
 extern struct lprocfs_stats *obd_memory;
@@ -256,6 +255,7 @@ int obd_alloc_fail(const void *ptr, const char *name, const char *type,
 #define OBD_FAIL_OSD_SCRUB_FATAL			0x192
 #define OBD_FAIL_OSD_FID_MAPPING			0x193
 #define OBD_FAIL_OSD_LMA_INCOMPAT			0x194
+#define OBD_FAIL_OSD_COMPAT_INVALID_ENTRY		0x195
 
 #define OBD_FAIL_OST		     0x200
 #define OBD_FAIL_OST_CONNECT_NET	 0x201
@@ -416,6 +416,13 @@ int obd_alloc_fail(const void *ptr, const char *name, const char *type,
 #define OBD_FAIL_MGC_PAUSE_PROCESS_LOG   0x903
 #define OBD_FAIL_MGS_PAUSE_REQ	   0x904
 #define OBD_FAIL_MGS_PAUSE_TARGET_REG    0x905
+#define OBD_FAIL_MGS_CONNECT_NET	 0x906
+#define OBD_FAIL_MGS_DISCONNECT_NET	 0x907
+#define OBD_FAIL_MGS_SET_INFO_NET	 0x908
+#define OBD_FAIL_MGS_EXCEPTION_NET	 0x909
+#define OBD_FAIL_MGS_TARGET_REG_NET	 0x90a
+#define OBD_FAIL_MGS_TARGET_DEL_NET	 0x90b
+#define OBD_FAIL_MGS_CONFIG_READ_NET	 0x90c
 
 #define OBD_FAIL_QUOTA_DQACQ_NET			0xA01
 #define OBD_FAIL_QUOTA_EDQUOT	    0xA02
@@ -457,6 +464,7 @@ int obd_alloc_fail(const void *ptr, const char *name, const char *type,
 #define OBD_FAIL_LOCK_STATE_WAIT_INTR	       0x1402
 #define OBD_FAIL_LOV_INIT			    0x1403
 #define OBD_FAIL_GLIMPSE_DELAY			    0x1404
+#define OBD_FAIL_LLITE_XATTR_ENOMEM		    0x1405
 
 #define OBD_FAIL_FID_INDIR	0x1501
 #define OBD_FAIL_FID_INLMA	0x1502
@@ -498,7 +506,9 @@ int obd_alloc_fail(const void *ptr, const char *name, const char *type,
 
 extern atomic_t libcfs_kmemory;
 
-#ifdef LPROCFS
+extern void obd_update_maxusage(void);
+
+#if defined (CONFIG_PROC_FS)
 #define obd_memory_add(size)						  \
 	lprocfs_counter_add(obd_memory, OBD_MEMORY_STAT, (long)(size))
 #define obd_memory_sub(size)						  \
@@ -516,7 +526,6 @@ extern atomic_t libcfs_kmemory;
 	lprocfs_stats_collector(obd_memory, OBD_MEMORY_PAGES_STAT,	    \
 				LPROCFS_FIELDS_FLAGS_SUM)
 
-extern void obd_update_maxusage(void);
 extern __u64 obd_memory_max(void);
 extern __u64 obd_pages_max(void);
 
@@ -631,8 +640,8 @@ do {									      \
 #define OBD_ALLOC_GFP(ptr, size, gfp_mask)				      \
 	__OBD_MALLOC_VERBOSE(ptr, NULL, 0, size, gfp_mask)
 
-#define OBD_ALLOC(ptr, size) OBD_ALLOC_GFP(ptr, size, __GFP_IO)
-#define OBD_ALLOC_WAIT(ptr, size) OBD_ALLOC_GFP(ptr, size, GFP_IOFS)
+#define OBD_ALLOC(ptr, size) OBD_ALLOC_GFP(ptr, size, GFP_NOFS)
+#define OBD_ALLOC_WAIT(ptr, size) OBD_ALLOC_GFP(ptr, size, GFP_KERNEL)
 #define OBD_ALLOC_PTR(ptr) OBD_ALLOC(ptr, sizeof(*(ptr)))
 #define OBD_ALLOC_PTR_WAIT(ptr) OBD_ALLOC_WAIT(ptr, sizeof(*(ptr)))
 
@@ -640,7 +649,7 @@ do {									      \
 	__OBD_MALLOC_VERBOSE(ptr, cptab, cpt, size, gfp_mask)
 
 #define OBD_CPT_ALLOC(ptr, cptab, cpt, size)				      \
-	OBD_CPT_ALLOC_GFP(ptr, cptab, cpt, size, __GFP_IO)
+	OBD_CPT_ALLOC_GFP(ptr, cptab, cpt, size, GFP_NOFS)
 
 #define OBD_CPT_ALLOC_PTR(ptr, cptab, cpt)				      \
 	OBD_CPT_ALLOC(ptr, cptab, cpt, sizeof(*(ptr)))
@@ -653,7 +662,7 @@ do {									      \
 	if (unlikely((ptr) == NULL)) {					\
 		CERROR("vmalloc of '" #ptr "' (%d bytes) failed\n",	   \
 		       (int)(size));					  \
-		CERROR(LPU64" total bytes allocated by Lustre, %d by LNET\n", \
+		CERROR("%llu total bytes allocated by Lustre, %d by LNET\n", \
 		       obd_memory_sum(), atomic_read(&libcfs_kmemory));   \
 	} else {							      \
 		OBD_ALLOC_POST(ptr, size, "vmalloced");		       \
@@ -671,7 +680,7 @@ do {									      \
  *
  * Be very careful when changing this value, especially when decreasing it,
  * since vmalloc in Linux doesn't perform well on multi-cores system, calling
- * vmalloc in critical path would hurt peformance badly. See LU-66.
+ * vmalloc in critical path would hurt performance badly. See LU-66.
  */
 #define OBD_ALLOC_BIG (4 * PAGE_CACHE_SIZE)
 
@@ -783,10 +792,10 @@ do {									  \
 } while(0)
 
 #define OBD_SLAB_ALLOC(ptr, slab, size)					      \
-	OBD_SLAB_ALLOC_GFP(ptr, slab, size, __GFP_IO)
+	OBD_SLAB_ALLOC_GFP(ptr, slab, size, GFP_NOFS)
 
 #define OBD_SLAB_CPT_ALLOC(ptr, slab, cptab, cpt, size)			      \
-	OBD_SLAB_CPT_ALLOC_GFP(ptr, slab, cptab, cpt, size, __GFP_IO)
+	OBD_SLAB_CPT_ALLOC_GFP(ptr, slab, cptab, cpt, size, GFP_NOFS)
 
 #define OBD_SLAB_ALLOC_PTR(ptr, slab)					      \
 	OBD_SLAB_ALLOC(ptr, slab, sizeof(*(ptr)))
@@ -813,11 +822,11 @@ do {									      \
 		alloc_page(gfp_mask) :				      \
 		alloc_pages_node(cfs_cpt_spread_node(cptab, cpt), gfp_mask, 0);\
 	if (unlikely((ptr) == NULL)) {					\
-		CERROR("alloc_pages of '" #ptr "' %d page(s) / "LPU64" bytes "\
+		CERROR("alloc_pages of '" #ptr "' %d page(s) / %llu bytes "\
 		       "failed\n", (int)1,				    \
 		       (__u64)(1 << PAGE_CACHE_SHIFT));			 \
-		CERROR(LPU64" total bytes and "LPU64" total pages "	   \
-		       "("LPU64" bytes) allocated by Lustre, "		\
+		CERROR("%llu total bytes and %llu total pages "	   \
+		       "(%llu bytes) allocated by Lustre, "		\
 		       "%d total bytes by LNET\n",			    \
 		       obd_memory_sum(),				      \
 		       obd_pages_sum() << PAGE_CACHE_SHIFT,		     \
@@ -826,7 +835,7 @@ do {									      \
 	} else {							      \
 		obd_pages_add(0);					     \
 		CDEBUG(D_MALLOC, "alloc_pages '" #ptr "': %d page(s) / "      \
-		       LPU64" bytes at %p.\n",				\
+		       "%llu bytes at %p.\n",				\
 		       (int)1,						\
 		       (__u64)(1 << PAGE_CACHE_SHIFT), ptr);		    \
 	}								     \
@@ -841,7 +850,7 @@ do {									      \
 do {									  \
 	LASSERT(ptr);							 \
 	obd_pages_sub(0);						     \
-	CDEBUG(D_MALLOC, "free_pages '" #ptr "': %d page(s) / "LPU64" bytes " \
+	CDEBUG(D_MALLOC, "free_pages '" #ptr "': %d page(s) / %llu bytes " \
 	       "at %p.\n",						    \
 	       (int)1, (__u64)(1 << PAGE_CACHE_SHIFT),			  \
 	       ptr);							  \

@@ -194,6 +194,7 @@ static int lov_io_sub_init(const struct lu_env *env, struct lov_io *lio,
 		sub_io->ci_lockreq = io->ci_lockreq;
 		sub_io->ci_type    = io->ci_type;
 		sub_io->ci_no_srvlock = io->ci_no_srvlock;
+		sub_io->ci_noatime = io->ci_noatime;
 
 		lov_sub_enter(sub);
 		result = cl_io_sub_init(sub->sub_env, sub_io,
@@ -397,7 +398,7 @@ static int lov_io_iter_init(const struct lu_env *env,
 					   start, end);
 			rc = cl_io_iter_init(sub->sub_env, sub->sub_io);
 			lov_sub_put(sub);
-			CDEBUG(D_VFSTRACE, "shrink: %d ["LPU64", "LPU64")\n",
+			CDEBUG(D_VFSTRACE, "shrink: %d [%llu, %llu)\n",
 			       stripe, start, end);
 		} else
 			rc = PTR_ERR(sub);
@@ -435,8 +436,8 @@ static int lov_io_rw_iter_init(const struct lu_env *env,
 					      next) - io->u.ci_rw.crw_pos;
 		lio->lis_pos    = io->u.ci_rw.crw_pos;
 		lio->lis_endpos = io->u.ci_rw.crw_pos + io->u.ci_rw.crw_count;
-		CDEBUG(D_VFSTRACE, "stripe: "LPU64" chunk: ["LPU64", "LPU64") "
-		       LPU64"\n", (__u64)start, lio->lis_pos, lio->lis_endpos,
+		CDEBUG(D_VFSTRACE, "stripe: %llu chunk: [%llu, %llu) %llu\n",
+		       (__u64)start, lio->lis_pos, lio->lis_endpos,
 		       (__u64)lio->lis_io_endpos);
 	}
 	/*
@@ -947,14 +948,23 @@ int lov_io_init_released(const struct lu_env *env, struct cl_object *obj,
 		LASSERTF(0, "invalid type %d\n", io->ci_type);
 	case CIT_MISC:
 	case CIT_FSYNC:
-		result = +1;
+		result = 1;
 		break;
 	case CIT_SETATTR:
+		/* the truncate to 0 is managed by MDT:
+		 * - in open, for open O_TRUNC
+		 * - in setattr, for truncate
+		 */
+		/* the truncate is for size > 0 so triggers a restore */
+		if (cl_io_is_trunc(io))
+			io->ci_restore_needed = 1;
+		result = -ENODATA;
+		break;
 	case CIT_READ:
 	case CIT_WRITE:
 	case CIT_FAULT:
-		/* TODO: need to restore the file. */
-		result = -EBADF;
+		io->ci_restore_needed = 1;
+		result = -ENODATA;
 		break;
 	}
 	if (result == 0) {

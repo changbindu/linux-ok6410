@@ -24,6 +24,9 @@
 #include <linux/cdev.h>
 #include <linux/idr.h>
 #include <linux/notifier.h>
+#include <linux/irqreturn.h>
+#include <linux/dmaengine.h>
+#include <linux/mic_bus.h>
 
 #include "mic_intr.h"
 
@@ -86,6 +89,8 @@ enum mic_stepping {
  * @cdev: Character device for MIC.
  * @vdev_list: list of virtio devices.
  * @pm_notifier: Handles PM notifications from the OS.
+ * @dma_mbdev: MIC BUS DMA device.
+ * @dma_ch: DMA channel reserved by this driver for use by virtio devices.
  */
 struct mic_device {
 	struct mic_mw mmio;
@@ -112,7 +117,7 @@ struct mic_device {
 	struct work_struct shutdown_work;
 	u8 state;
 	u8 shutdown_status;
-	struct sysfs_dirent *state_sysfs;
+	struct kernfs_node *state_sysfs;
 	struct completion reset_wait;
 	void *log_buf_addr;
 	int *log_buf_len;
@@ -123,6 +128,8 @@ struct mic_device {
 	struct cdev cdev;
 	struct list_head vdev_list;
 	struct notifier_block pm_notifier;
+	struct mbus_device *dma_mbdev;
+	struct dma_chan *dma_ch;
 };
 
 /**
@@ -134,6 +141,8 @@ struct mic_device {
  * @send_intr: Send an interrupt for a particular doorbell on the card.
  * @ack_interrupt: Hardware specific operations to ack the h/w on
  * receipt of an interrupt.
+ * @intr_workarounds: Hardware specific workarounds needed after
+ * handling an interrupt.
  * @reset: Reset the remote processor.
  * @reset_fw_ready: Reset firmware ready field.
  * @is_fw_ready: Check if firmware is ready for OS download.
@@ -141,6 +150,7 @@ struct mic_device {
  * @load_mic_fw: Load firmware segments required to boot the card
  * into card memory. This includes the kernel, command line, ramdisk etc.
  * @get_postcode: Get post code status from firmware.
+ * @dma_filter: DMA filter function to be used.
  */
 struct mic_hw_ops {
 	u8 aper_bar;
@@ -149,12 +159,14 @@ struct mic_hw_ops {
 	void (*write_spad)(struct mic_device *mdev, unsigned int idx, u32 val);
 	void (*send_intr)(struct mic_device *mdev, int doorbell);
 	u32 (*ack_interrupt)(struct mic_device *mdev);
+	void (*intr_workarounds)(struct mic_device *mdev);
 	void (*reset)(struct mic_device *mdev);
 	void (*reset_fw_ready)(struct mic_device *mdev);
 	bool (*is_fw_ready)(struct mic_device *mdev);
 	void (*send_firmware_intr)(struct mic_device *mdev);
 	int (*load_mic_fw)(struct mic_device *mdev, const char *buf);
 	u32 (*get_postcode)(struct mic_device *mdev);
+	bool (*dma_filter)(struct dma_chan *chan, void *param);
 };
 
 /**
@@ -181,6 +193,22 @@ static inline void
 mic_mmio_write(struct mic_mw *mw, u32 val, u32 offset)
 {
 	iowrite32(val, mw->va + offset);
+}
+
+static inline struct dma_chan *mic_request_dma_chan(struct mic_device *mdev)
+{
+	dma_cap_mask_t mask;
+	struct dma_chan *chan;
+
+	dma_cap_zero(mask);
+	dma_cap_set(DMA_MEMCPY, mask);
+	chan = dma_request_channel(mask, mdev->ops->dma_filter,
+				   mdev->sdev->parent);
+	if (chan)
+		return chan;
+	dev_err(mdev->sdev->parent, "%s %d unable to acquire channel\n",
+		__func__, __LINE__);
+	return NULL;
 }
 
 void mic_sysfs_init(struct mic_device *mdev);

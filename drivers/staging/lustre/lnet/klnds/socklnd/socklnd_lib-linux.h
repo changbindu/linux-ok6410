@@ -54,7 +54,6 @@
 #include <asm/uaccess.h>
 #include <asm/irq.h>
 
-#include <linux/init.h>
 #include <linux/fs.h>
 #include <linux/file.h>
 #include <linux/list.h>
@@ -63,8 +62,8 @@
 #include <asm/div64.h>
 #include <linux/syscalls.h>
 
-#include <linux/libcfs/libcfs.h>
-#include <linux/libcfs/linux/portals_compat25.h>
+#include "../../../include/linux/libcfs/libcfs.h"
+#include "../../../include/linux/libcfs/linux/portals_compat25.h"
 
 #include <linux/crc32.h>
 static inline __u32 ksocknal_csum(__u32 crc, unsigned char const *p, size_t len)

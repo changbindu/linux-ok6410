@@ -316,7 +316,7 @@ EXPORT_SYMBOL(gen_pool_alloc);
  * gen_pool_dma_alloc - allocate special memory from the pool for DMA usage
  * @pool: pool to allocate from
  * @size: number of bytes to allocate from the pool
- * @dma: dma-view physical address
+ * @dma: dma-view physical address return value.  Use NULL if unneeded.
  *
  * Allocate the requested number of bytes from the specified pool.
  * Uses the pool allocation function (with first-fit algorithm by default).
@@ -334,7 +334,8 @@ void *gen_pool_dma_alloc(struct gen_pool *pool, size_t size, dma_addr_t *dma)
 	if (!vaddr)
 		return NULL;
 
-	*dma = gen_pool_virt_to_phys(pool, vaddr);
+	if (dma)
+		*dma = gen_pool_virt_to_phys(pool, vaddr);
 
 	return (void *)vaddr;
 }
@@ -587,6 +588,7 @@ struct gen_pool *of_get_named_gen_pool(struct device_node *np,
 	if (!np_pool)
 		return NULL;
 	pdev = of_find_device_by_node(np_pool);
+	of_node_put(np_pool);
 	if (!pdev)
 		return NULL;
 	return dev_get_gen_pool(&pdev->dev);

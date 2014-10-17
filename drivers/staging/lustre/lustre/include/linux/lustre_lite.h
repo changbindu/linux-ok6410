@@ -46,13 +46,13 @@
 #include <linux/dcache.h>
 #include <linux/proc_fs.h>
 
-#include <obd_class.h>
-#include <lustre_net.h>
-#include <lustre_ha.h>
+#include "../obd_class.h"
+#include "../lustre_net.h"
+#include "../lustre_ha.h"
 
 #include <linux/rbtree.h>
-#include <linux/lustre_compat25.h>
-#include <linux/lustre_common.h>
+#include "../../include/linux/lustre_compat25.h"
+#include "../../include/linux/lustre_common.h"
 #include <linux/pagemap.h>
 
 /* lprocfs.c */
@@ -88,6 +88,7 @@ enum {
 	 LPROC_LL_ALLOC_INODE,
 	 LPROC_LL_SETXATTR,
 	 LPROC_LL_GETXATTR,
+	 LPROC_LL_GETXATTR_HITS,
 	 LPROC_LL_LISTXATTR,
 	 LPROC_LL_REMOVEXATTR,
 	 LPROC_LL_INODE_PERM,

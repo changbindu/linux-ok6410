@@ -29,6 +29,7 @@
 #include <linux/leds.h>
 #include <linux/dma-mapping.h>
 #include <linux/pinctrl/machine.h>
+#include <linux/platform_data/camera-rcar.h>
 #include <linux/platform_data/gpio-rcar.h>
 #include <linux/platform_data/rcar-du.h>
 #include <linux/platform_data/usb-rcar-phy.h>
@@ -40,13 +41,15 @@
 #include <linux/mmc/host.h>
 #include <linux/mmc/sh_mobile_sdhi.h>
 #include <linux/mfd/tmio.h>
+
 #include <media/soc_camera.h>
-#include <mach/r8a7779.h>
-#include <mach/common.h>
-#include <mach/irqs.h>
 #include <asm/mach-types.h>
 #include <asm/mach/arch.h>
 #include <asm/traps.h>
+
+#include "common.h"
+#include "irqs.h"
+#include "r8a7779.h"
 
 /* Fixed 3.3V regulator to be used by SDHI0 */
 static struct regulator_consumer_supply fixed3v3_power_consumers[] = {
@@ -259,9 +262,28 @@ static struct platform_device leds_device = {
 	},
 };
 
+/* VIN */
 static struct rcar_vin_platform_data vin_platform_data __initdata = {
 	.flags	= RCAR_VIN_BT656,
 };
+
+#define MARZEN_VIN(idx)						\
+static struct resource vin##idx##_resources[] __initdata = {	\
+	DEFINE_RES_MEM(0xffc50000 + 0x1000 * (idx), 0x1000),	\
+	DEFINE_RES_IRQ(gic_iid(0x5f + (idx))),			\
+};								\
+								\
+static struct platform_device_info vin##idx##_info __initdata = { \
+	.name		= "r8a7779-vin",			\
+	.id		= idx,					\
+	.res		= vin##idx##_resources,			\
+	.num_res	= ARRAY_SIZE(vin##idx##_resources),	\
+	.dma_mask	= DMA_BIT_MASK(32),			\
+	.data		= &vin_platform_data,			\
+	.size_data	= sizeof(vin_platform_data),		\
+}
+MARZEN_VIN(1);
+MARZEN_VIN(3);
 
 #define MARZEN_CAMERA(idx)					\
 static struct i2c_board_info camera##idx##_info = {		\
@@ -326,8 +348,6 @@ static const struct pinctrl_map marzen_pinctrl_map[] = {
 				  "sdhi0_ctrl", "sdhi0"),
 	PIN_MAP_MUX_GROUP_DEFAULT("sh_mobile_sdhi.0", "pfc-r8a7779",
 				  "sdhi0_cd", "sdhi0"),
-	PIN_MAP_MUX_GROUP_DEFAULT("sh_mobile_sdhi.0", "pfc-r8a7779",
-				  "sdhi0_wp", "sdhi0"),
 	/* SMSC */
 	PIN_MAP_MUX_GROUP_DEFAULT("smsc911x", "pfc-r8a7779",
 				  "intc_irq1_b", "intc"),
@@ -367,8 +387,8 @@ static void __init marzen_init(void)
 	r8a7779_init_irq_extpin(1); /* IRQ1 as individual interrupt */
 
 	r8a7779_add_standard_devices();
-	r8a7779_add_vin_device(1, &vin_platform_data);
-	r8a7779_add_vin_device(3, &vin_platform_data);
+	platform_device_register_full(&vin1_info);
+	platform_device_register_full(&vin3_info);
 	platform_add_devices(marzen_devices, ARRAY_SIZE(marzen_devices));
 	marzen_add_du_device();
 }

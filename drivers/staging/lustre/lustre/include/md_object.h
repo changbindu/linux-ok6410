@@ -35,7 +35,7 @@
  *
  * lustre/include/md_object.h
  *
- * Extention of lu_object.h for metadata objects
+ * Extension of lu_object.h for metadata objects
  */
 
 #ifndef _LUSTRE_MD_OBJECT_H
@@ -56,7 +56,7 @@
 /*
  * super-class definitions.
  */
-#include <dt_object.h>
+#include "dt_object.h"
 
 struct md_device;
 struct md_device_operations;
@@ -352,8 +352,8 @@ struct md_device_operations {
 	int (*mdo_root_get)(const struct lu_env *env, struct md_device *m,
 			    struct lu_fid *f);
 
-	int (*mdo_maxsize_get)(const struct lu_env *env, struct md_device *m,
-			       int *md_size, int *cookie_size);
+	int (*mdo_maxeasize_get)(const struct lu_env *env, struct md_device *m,
+				int *easize);
 
 	int (*mdo_statfs)(const struct lu_env *env, struct md_device *m,
 			  struct obd_statfs *sfs);

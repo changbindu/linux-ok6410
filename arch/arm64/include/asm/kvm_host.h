@@ -26,7 +26,12 @@
 #include <asm/kvm_asm.h>
 #include <asm/kvm_mmio.h>
 
-#define KVM_MAX_VCPUS 4
+#if defined(CONFIG_KVM_ARM_MAX_VCPUS)
+#define KVM_MAX_VCPUS CONFIG_KVM_ARM_MAX_VCPUS
+#else
+#define KVM_MAX_VCPUS 0
+#endif
+
 #define KVM_USER_MEM_SLOTS 32
 #define KVM_PRIVATE_MEM_SLOTS 4
 #define KVM_COALESCED_MMIO_PAGE_OFFSET 1
@@ -34,7 +39,7 @@
 #include <kvm/arm_vgic.h>
 #include <kvm/arm_arch_timer.h>
 
-#define KVM_VCPU_MAX_FEATURES 2
+#define KVM_VCPU_MAX_FEATURES 3
 
 struct kvm_vcpu;
 int kvm_target_cpu(void);
@@ -81,7 +86,7 @@ struct kvm_cpu_context {
 	struct kvm_regs	gp_regs;
 	union {
 		u64 sys_regs[NR_SYS_REGS];
-		u32 cp15[NR_CP15_REGS];
+		u32 copro[NR_COPRO_REGS];
 	};
 };
 
@@ -95,6 +100,9 @@ struct kvm_vcpu_arch {
 
 	/* Exception Information */
 	struct kvm_vcpu_fault_info fault;
+
+	/* Debug state */
+	u64 debug_flags;
 
 	/* Pointer to host CPU context */
 	kvm_cpu_context_t *host_cpu_context;
@@ -133,7 +141,20 @@ struct kvm_vcpu_arch {
 
 #define vcpu_gp_regs(v)		(&(v)->arch.ctxt.gp_regs)
 #define vcpu_sys_reg(v,r)	((v)->arch.ctxt.sys_regs[(r)])
-#define vcpu_cp15(v,r)		((v)->arch.ctxt.cp15[(r)])
+/*
+ * CP14 and CP15 live in the same array, as they are backed by the
+ * same system registers.
+ */
+#define vcpu_cp14(v,r)		((v)->arch.ctxt.copro[(r)])
+#define vcpu_cp15(v,r)		((v)->arch.ctxt.copro[(r)])
+
+#ifdef CONFIG_CPU_BIG_ENDIAN
+#define vcpu_cp15_64_high(v,r)	vcpu_cp15((v),(r))
+#define vcpu_cp15_64_low(v,r)	vcpu_cp15((v),(r) + 1)
+#else
+#define vcpu_cp15_64_high(v,r)	vcpu_cp15((v),(r) + 1)
+#define vcpu_cp15_64_low(v,r)	vcpu_cp15((v),(r))
+#endif
 
 struct kvm_vm_stat {
 	u32 remote_tlb_flush;
@@ -193,6 +214,34 @@ static inline void __cpu_init_hyp_mode(phys_addr_t boot_pgd_ptr,
 	 */
 	kvm_call_hyp((void *)boot_pgd_ptr, pgd_ptr,
 		     hyp_stack_ptr, vector_ptr);
+}
+
+struct vgic_sr_vectors {
+	void	*save_vgic;
+	void	*restore_vgic;
+};
+
+static inline void vgic_arch_setup(const struct vgic_params *vgic)
+{
+	extern struct vgic_sr_vectors __vgic_sr_vectors;
+
+	switch(vgic->type)
+	{
+	case VGIC_V2:
+		__vgic_sr_vectors.save_vgic	= __save_vgic_v2_state;
+		__vgic_sr_vectors.restore_vgic	= __restore_vgic_v2_state;
+		break;
+
+#ifdef CONFIG_ARM_GIC_V3
+	case VGIC_V3:
+		__vgic_sr_vectors.save_vgic	= __save_vgic_v3_state;
+		__vgic_sr_vectors.restore_vgic	= __restore_vgic_v3_state;
+		break;
+#endif
+
+	default:
+		BUG();
+	}
 }
 
 #endif /* __ARM64_KVM_HOST_H__ */

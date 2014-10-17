@@ -295,8 +295,8 @@ xfs_trans_mod_dquot(
 /*
  * Given an array of dqtrx structures, lock all the dquots associated and join
  * them to the transaction, provided they have been modified.  We know that the
- * highest number of dquots of one type - usr, grp OR prj - involved in a
- * transaction is 2 so we don't need to make this very generic.
+ * highest number of dquots of one type - usr, grp and prj - involved in a
+ * transaction is 3 so we don't need to make this very generic.
  */
 STATIC void
 xfs_trans_dqlockedjoin(
@@ -722,8 +722,8 @@ xfs_trans_dqresv(
 error_return:
 	xfs_dqunlock(dqp);
 	if (flags & XFS_QMOPT_ENOSPC)
-		return ENOSPC;
-	return EDQUOT;
+		return -ENOSPC;
+	return -EDQUOT;
 }
 
 

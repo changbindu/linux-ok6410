@@ -29,11 +29,13 @@
  *
  * Author: Mikhail Pershin <mike.pershin@intel.com>
  */
+#ifndef __LOCAL_STORAGE_H
+#define __LOCAL_STORAGE_H
 
-#include <dt_object.h>
-#include <obd.h>
-#include <lustre_fid.h>
-#include <lustre_disk.h>
+#include "../include/dt_object.h"
+#include "../include/obd.h"
+#include "../include/lustre_fid.h"
+#include "../include/lustre_disk.h"
 
 struct ls_device {
 	struct dt_device	 ls_top_dev;
@@ -86,3 +88,4 @@ struct los_ondisk {
 };
 
 #define LOS_MAGIC	0xdecafbee
+#endif

@@ -200,7 +200,7 @@ static void dma_tx_callback(void *param)
 
 	/* clear the bit used to serialize the DMA tx. */
 	clear_bit(MXS_AUART_DMA_TX_SYNC, &s->flags);
-	smp_mb__after_clear_bit();
+	smp_mb__after_atomic();
 
 	/* wake up the possible processes. */
 	if (uart_circ_chars_pending(xmit) < WAKEUP_CHARS)
@@ -275,7 +275,7 @@ static void mxs_auart_tx_chars(struct mxs_auart_port *s)
 			mxs_auart_dma_tx(s, i);
 		} else {
 			clear_bit(MXS_AUART_DMA_TX_SYNC, &s->flags);
-			smp_mb__after_clear_bit();
+			smp_mb__after_atomic();
 		}
 		return;
 	}
@@ -604,7 +604,7 @@ static void mxs_auart_settermios(struct uart_port *u,
 
 	if (termios->c_iflag & INPCK)
 		u->read_status_mask |= AUART_STAT_PERR;
-	if (termios->c_iflag & (BRKINT | PARMRK))
+	if (termios->c_iflag & (IGNBRK | BRKINT | PARMRK))
 		u->read_status_mask |= AUART_STAT_BERR;
 
 	/*
@@ -734,9 +734,12 @@ static void mxs_auart_reset(struct uart_port *u)
 
 static int mxs_auart_startup(struct uart_port *u)
 {
+	int ret;
 	struct mxs_auart_port *s = to_auart_port(u);
 
-	clk_prepare_enable(s->clk);
+	ret = clk_prepare_enable(s->clk);
+	if (ret)
+		return ret;
 
 	writel(AUART_CTRL0_CLKGATE, u->membase + AUART_CTRL0_CLR);
 
@@ -812,17 +815,11 @@ static void mxs_auart_break_ctl(struct uart_port *u, int ctl)
 			     u->membase + AUART_LINECTRL_CLR);
 }
 
-static void mxs_auart_enable_ms(struct uart_port *port)
-{
-	/* just empty */
-}
-
 static struct uart_ops mxs_auart_ops = {
 	.tx_empty       = mxs_auart_tx_empty,
 	.start_tx       = mxs_auart_start_tx,
 	.stop_tx	= mxs_auart_stop_tx,
 	.stop_rx	= mxs_auart_stop_rx,
-	.enable_ms      = mxs_auart_enable_ms,
 	.break_ctl      = mxs_auart_break_ctl,
 	.set_mctrl	= mxs_auart_set_mctrl,
 	.get_mctrl      = mxs_auart_get_mctrl,
@@ -957,7 +954,9 @@ auart_console_setup(struct console *co, char *options)
 	if (!s)
 		return -ENODEV;
 
-	clk_prepare_enable(s->clk);
+	ret = clk_prepare_enable(s->clk);
+	if (ret)
+		return ret;
 
 	if (options)
 		uart_parse_options(options, &baud, &parity, &bits, &flow);

@@ -7,7 +7,6 @@
  * $Id:
  *====================================================
  */
-#include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/usb.h>
@@ -36,7 +35,7 @@ static struct usb_device_id id_table[] = {
 
 MODULE_DEVICE_TABLE(usb, id_table);
 
-static bool gPollingfailed = false;
+static bool gPollingfailed;
 static int ft1000_poll_thread(void *arg)
 {
 	int ret;
@@ -45,13 +44,13 @@ static int ft1000_poll_thread(void *arg)
 		msleep(10);
 		if (!gPollingfailed) {
 			ret = ft1000_poll(arg);
-			if (ret != STATUS_SUCCESS) {
+			if (ret != 0) {
 				DEBUG("ft1000_poll_thread: polling failed\n");
 				gPollingfailed = true;
 			}
 		}
 	}
-	return STATUS_SUCCESS;
+	return 0;
 }
 
 static int ft1000_probe(struct usb_interface *interface,
@@ -197,17 +196,10 @@ static int ft1000_probe(struct usb_interface *interface,
 	if (ret)
 		goto err_thread;
 
-	ret = ft1000_init_proc(ft1000dev->net);
-	if (ret)
-		goto err_proc;
-
 	ft1000dev->NetDevRegDone = 1;
 
 	return 0;
 
-err_proc:
-	unregister_netdev(ft1000dev->net);
-	free_netdev(ft1000dev->net);
 err_thread:
 	kthread_stop(ft1000dev->pPollThread);
 err_load:
@@ -231,7 +223,6 @@ static void ft1000_disconnect(struct usb_interface *interface)
 
 	if (pft1000info) {
 		ft1000dev = pft1000info->priv;
-		ft1000_cleanup_proc(pft1000info);
 		if (ft1000dev->pPollThread)
 			kthread_stop(ft1000dev->pPollThread);
 

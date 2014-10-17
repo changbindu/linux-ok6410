@@ -38,8 +38,6 @@
 
 #include "das08.h"
 
-#define PCI_DEVICE_ID_PCIDAS08		0x0029
-
 static const struct das08_board_struct das08_pci_boards[] = {
 	{
 		.name		= "pci-das08",
@@ -89,8 +87,8 @@ static int das08_pci_probe(struct pci_dev *dev,
 				      id->driver_data);
 }
 
-static DEFINE_PCI_DEVICE_TABLE(das08_pci_table) = {
-	{ PCI_DEVICE(PCI_VENDOR_ID_CB, PCI_DEVICE_ID_PCIDAS08) },
+static const struct pci_device_id das08_pci_table[] = {
+	{ PCI_DEVICE(PCI_VENDOR_ID_CB, 0x0029) },
 	{ 0 }
 };
 MODULE_DEVICE_TABLE(pci, das08_pci_table);

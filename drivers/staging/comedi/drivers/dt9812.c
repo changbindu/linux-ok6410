@@ -41,7 +41,6 @@ for my needs.
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/errno.h>
-#include <linux/init.h>
 #include <linux/uaccess.h>
 #include <linux/usb.h>
 
@@ -654,6 +653,7 @@ static int dt9812_find_endpoints(struct comedi_device *dev)
 
 	for (i = 0; i < host->desc.bNumEndpoints; ++i) {
 		int dir = -1;
+
 		ep = &host->endpoint[i].desc;
 		switch (i) {
 		case 0:
