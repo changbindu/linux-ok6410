@@ -33,7 +33,6 @@ typedef struct xpaddr {
 #define INVALID_P2M_ENTRY      (~0UL)
 
 unsigned long __pfn_to_mfn(unsigned long pfn);
-unsigned long __mfn_to_pfn(unsigned long mfn);
 extern struct rb_root phys_to_mach;
 
 static inline unsigned long pfn_to_mfn(unsigned long pfn)
@@ -51,14 +50,6 @@ static inline unsigned long pfn_to_mfn(unsigned long pfn)
 
 static inline unsigned long mfn_to_pfn(unsigned long mfn)
 {
-	unsigned long pfn;
-
-	if (phys_to_mach.rb_node != NULL) {
-		pfn = __mfn_to_pfn(mfn);
-		if (pfn != INVALID_P2M_ENTRY)
-			return pfn;
-	}
-
 	return mfn;
 }
 
@@ -77,7 +68,6 @@ static inline xpaddr_t machine_to_phys(xmaddr_t machine)
 }
 /* VIRT <-> MACHINE conversion */
 #define virt_to_machine(v)	(phys_to_machine(XPADDR(__pa(v))))
-#define virt_to_pfn(v)          (PFN_DOWN(__pa(v)))
 #define virt_to_mfn(v)		(pfn_to_mfn(virt_to_pfn(v)))
 #define mfn_to_virt(m)		(__va(mfn_to_pfn(m) << PAGE_SHIFT))
 

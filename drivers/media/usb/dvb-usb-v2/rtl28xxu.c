@@ -24,7 +24,6 @@
 
 #include "rtl2830.h"
 #include "rtl2832.h"
-#include "rtl2832_sdr.h"
 
 #include "qt1010.h"
 #include "mt2060.h"
@@ -35,6 +34,45 @@
 #include "fc2580.h"
 #include "tua9001.h"
 #include "r820t.h"
+
+/*
+ * RTL2832_SDR module is in staging. That logic is added in order to avoid any
+ * hard dependency to drivers/staging/ directory as we want compile mainline
+ * driver even whole staging directory is missing.
+ */
+#include <media/v4l2-subdev.h>
+
+#if IS_ENABLED(CONFIG_DVB_RTL2832_SDR)
+struct dvb_frontend *rtl2832_sdr_attach(struct dvb_frontend *fe,
+	struct i2c_adapter *i2c, const struct rtl2832_config *cfg,
+	struct v4l2_subdev *sd);
+#else
+static inline struct dvb_frontend *rtl2832_sdr_attach(struct dvb_frontend *fe,
+	struct i2c_adapter *i2c, const struct rtl2832_config *cfg,
+	struct v4l2_subdev *sd)
+{
+	return NULL;
+}
+#endif
+
+#ifdef CONFIG_MEDIA_ATTACH
+#define dvb_attach_sdr(FUNCTION, ARGS...) ({ \
+	void *__r = NULL; \
+	typeof(&FUNCTION) __a = symbol_request(FUNCTION); \
+	if (__a) { \
+		__r = (void *) __a(ARGS); \
+		if (__r == NULL) \
+			symbol_put(FUNCTION); \
+	} \
+	__r; \
+})
+
+#else
+#define dvb_attach_sdr(FUNCTION, ARGS...) ({ \
+	FUNCTION(ARGS); \
+})
+
+#endif
 
 static int rtl28xxu_disable_rc;
 module_param_named(disable_rc, rtl28xxu_disable_rc, int, 0644);
@@ -908,7 +946,7 @@ static int rtl2832u_tuner_attach(struct dvb_usb_adapter *adap)
 				adap->fe[0]->ops.tuner_ops.get_rf_strength;
 
 		/* attach SDR */
-		dvb_attach(rtl2832_sdr_attach, adap->fe[0], &d->i2c_adap,
+		dvb_attach_sdr(rtl2832_sdr_attach, adap->fe[0], &d->i2c_adap,
 				&rtl28xxu_rtl2832_fc0012_config, NULL);
 		break;
 	case TUNER_RTL2832_FC0013:
@@ -920,7 +958,7 @@ static int rtl2832u_tuner_attach(struct dvb_usb_adapter *adap)
 				adap->fe[0]->ops.tuner_ops.get_rf_strength;
 
 		/* attach SDR */
-		dvb_attach(rtl2832_sdr_attach, adap->fe[0], &d->i2c_adap,
+		dvb_attach_sdr(rtl2832_sdr_attach, adap->fe[0], &d->i2c_adap,
 				&rtl28xxu_rtl2832_fc0013_config, NULL);
 		break;
 	case TUNER_RTL2832_E4000: {
@@ -951,7 +989,7 @@ static int rtl2832u_tuner_attach(struct dvb_usb_adapter *adap)
 			i2c_set_adapdata(i2c_adap_internal, d);
 
 			/* attach SDR */
-			dvb_attach(rtl2832_sdr_attach, adap->fe[0],
+			dvb_attach_sdr(rtl2832_sdr_attach, adap->fe[0],
 					i2c_adap_internal,
 					&rtl28xxu_rtl2832_e4000_config, sd);
 		}
@@ -982,7 +1020,7 @@ static int rtl2832u_tuner_attach(struct dvb_usb_adapter *adap)
 				adap->fe[0]->ops.tuner_ops.get_rf_strength;
 
 		/* attach SDR */
-		dvb_attach(rtl2832_sdr_attach, adap->fe[0], &d->i2c_adap,
+		dvb_attach_sdr(rtl2832_sdr_attach, adap->fe[0], &d->i2c_adap,
 				&rtl28xxu_rtl2832_r820t_config, NULL);
 		break;
 	case TUNER_RTL2832_R828D:
@@ -1249,19 +1287,19 @@ static int rtl2831u_rc_query(struct dvb_usb_device *d)
 		if (buf[2] == (u8) ~buf[3]) {
 			if (buf[0] == (u8) ~buf[1]) {
 				/* NEC standard (16 bit) */
-				rc_code = buf[0] << 8 | buf[2];
+				rc_code = RC_SCANCODE_NEC(buf[0], buf[2]);
 			} else {
 				/* NEC extended (24 bit) */
-				rc_code = buf[0] << 16 |
-						buf[1] << 8 | buf[2];
+				rc_code = RC_SCANCODE_NECX(buf[0] << 8 | buf[1],
+							   buf[2]);
 			}
 		} else {
 			/* NEC full (32 bit) */
-			rc_code = buf[0] << 24 | buf[1] << 16 |
-					buf[2] << 8 | buf[3];
+			rc_code = RC_SCANCODE_NEC32(buf[0] << 24 | buf[1] << 16 |
+						    buf[2] << 8  | buf[3]);
 		}
 
-		rc_keydown(d->rc_dev, rc_code, 0);
+		rc_keydown(d->rc_dev, RC_TYPE_NEC, rc_code, 0);
 
 		ret = rtl28xx_wr_reg(d, SYS_IRRC_SR, 1);
 		if (ret)
@@ -1499,6 +1537,14 @@ static const struct usb_device_id rtl28xxu_id_table[] = {
 		&rtl2832u_props, "Crypto ReDi PC 50 A", NULL) },
 	{ DVB_USB_DEVICE(USB_VID_KYE, 0x707f,
 		&rtl2832u_props, "Genius TVGo DVB-T03", NULL) },
+	{ DVB_USB_DEVICE(USB_VID_KWORLD_2, 0xd395,
+		&rtl2832u_props, "Peak DVB-T USB", NULL) },
+	{ DVB_USB_DEVICE(USB_VID_KWORLD_2, USB_PID_SVEON_STV20_RTL2832U,
+		&rtl2832u_props, "Sveon STV20", NULL) },
+	{ DVB_USB_DEVICE(USB_VID_KWORLD_2, USB_PID_SVEON_STV21,
+		&rtl2832u_props, "Sveon STV21", NULL) },
+	{ DVB_USB_DEVICE(USB_VID_KWORLD_2, USB_PID_SVEON_STV27,
+		&rtl2832u_props, "Sveon STV27", NULL) },
 
 	/* RTL2832P devices: */
 	{ DVB_USB_DEVICE(USB_VID_HANFTEK, 0x0131,

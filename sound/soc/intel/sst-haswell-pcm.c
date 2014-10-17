@@ -17,7 +17,6 @@
 #include <linux/module.h>
 #include <linux/dma-mapping.h>
 #include <linux/slab.h>
-#include <linux/module.h>
 #include <linux/delay.h>
 #include <asm/page.h>
 #include <asm/pgtable.h>
@@ -81,7 +80,7 @@ static const struct snd_pcm_hardware hsw_pcm_hardware = {
 				  SNDRV_PCM_INFO_PAUSE |
 				  SNDRV_PCM_INFO_RESUME |
 				  SNDRV_PCM_INFO_NO_PERIOD_WAKEUP,
-	.formats		= SNDRV_PCM_FMTBIT_S16_LE | SNDRV_PCM_FORMAT_S24_LE |
+	.formats		= SNDRV_PCM_FMTBIT_S16_LE | SNDRV_PCM_FMTBIT_S24_LE |
 				  SNDRV_PCM_FMTBIT_S32_LE,
 	.period_bytes_min	= PAGE_SIZE,
 	.period_bytes_max	= (HSW_PCM_PERIODS_MAX / HSW_PCM_PERIODS_MIN) * PAGE_SIZE,
@@ -99,6 +98,7 @@ struct hsw_pcm_data {
 	struct snd_compr_stream *cstream;
 	unsigned int wpos;
 	struct mutex mutex;
+	bool allocated;
 };
 
 /* private data for the driver */
@@ -107,11 +107,13 @@ struct hsw_priv_data {
 	struct sst_hsw *hsw;
 
 	/* page tables */
-	unsigned char *pcm_pg[HSW_PCM_COUNT][2];
+	struct snd_dma_buffer dmab[HSW_PCM_COUNT][2];
 
 	/* DAI data */
 	struct hsw_pcm_data pcm[HSW_PCM_COUNT];
 };
+
+static u32 hsw_notify_pointer(struct sst_hsw_stream *stream, void *data);
 
 static inline u32 hsw_mixer_to_ipc(unsigned int value)
 {
@@ -136,7 +138,7 @@ static inline unsigned int hsw_ipc_to_mixer(u32 value)
 static int hsw_stream_volume_put(struct snd_kcontrol *kcontrol,
 				struct snd_ctl_elem_value *ucontrol)
 {
-	struct snd_soc_platform *platform = snd_kcontrol_chip(kcontrol);
+	struct snd_soc_platform *platform = snd_soc_kcontrol_platform(kcontrol);
 	struct soc_mixer_control *mc =
 		(struct soc_mixer_control *)kcontrol->private_value;
 	struct hsw_priv_data *pdata =
@@ -174,7 +176,7 @@ static int hsw_stream_volume_put(struct snd_kcontrol *kcontrol,
 static int hsw_stream_volume_get(struct snd_kcontrol *kcontrol,
 				struct snd_ctl_elem_value *ucontrol)
 {
-	struct snd_soc_platform *platform = snd_kcontrol_chip(kcontrol);
+	struct snd_soc_platform *platform = snd_soc_kcontrol_platform(kcontrol);
 	struct soc_mixer_control *mc =
 		(struct soc_mixer_control *)kcontrol->private_value;
 	struct hsw_priv_data *pdata =
@@ -206,7 +208,7 @@ static int hsw_stream_volume_get(struct snd_kcontrol *kcontrol,
 static int hsw_volume_put(struct snd_kcontrol *kcontrol,
 				struct snd_ctl_elem_value *ucontrol)
 {
-	struct snd_soc_platform *platform = snd_kcontrol_chip(kcontrol);
+	struct snd_soc_platform *platform = snd_soc_kcontrol_platform(kcontrol);
 	struct hsw_priv_data *pdata = snd_soc_platform_get_drvdata(platform);
 	struct sst_hsw *hsw = pdata->hsw;
 	u32 volume;
@@ -231,7 +233,7 @@ static int hsw_volume_put(struct snd_kcontrol *kcontrol,
 static int hsw_volume_get(struct snd_kcontrol *kcontrol,
 				struct snd_ctl_elem_value *ucontrol)
 {
-	struct snd_soc_platform *platform = snd_kcontrol_chip(kcontrol);
+	struct snd_soc_platform *platform = snd_soc_kcontrol_platform(kcontrol);
 	struct hsw_priv_data *pdata = snd_soc_platform_get_drvdata(platform);
 	struct sst_hsw *hsw = pdata->hsw;
 	unsigned int volume = 0;
@@ -273,28 +275,26 @@ static const struct snd_kcontrol_new hsw_volume_controls[] = {
 };
 
 /* Create DMA buffer page table for DSP */
-static int create_adsp_page_table(struct hsw_priv_data *pdata,
-	struct snd_soc_pcm_runtime *rtd,
-	unsigned char *dma_area, size_t size, int pcm, int stream)
+static int create_adsp_page_table(struct snd_pcm_substream *substream,
+	struct hsw_priv_data *pdata, struct snd_soc_pcm_runtime *rtd,
+	unsigned char *dma_area, size_t size, int pcm)
 {
-	int i, pages;
+	struct snd_dma_buffer *dmab = snd_pcm_get_dma_buf(substream);
+	int i, pages, stream = substream->stream;
 
-	if (size % PAGE_SIZE)
-		pages = (size / PAGE_SIZE) + 1;
-	else
-		pages = size / PAGE_SIZE;
+	pages = snd_sgbuf_aligned_pages(size);
 
 	dev_dbg(rtd->dev, "generating page table for %p size 0x%zu pages %d\n",
 		dma_area, size, pages);
 
 	for (i = 0; i < pages; i++) {
 		u32 idx = (((i << 2) + i)) >> 1;
-		u32 pfn = (virt_to_phys(dma_area + i * PAGE_SIZE)) >> PAGE_SHIFT;
+		u32 pfn = snd_sgbuf_get_addr(dmab, i * PAGE_SIZE) >> PAGE_SHIFT;
 		u32 *pg_table;
 
 		dev_dbg(rtd->dev, "pfn i %i idx %d pfn %x\n", i, idx, pfn);
 
-		pg_table = (u32*)(pdata->pcm_pg[pcm][stream] + idx);
+		pg_table = (u32 *)(pdata->dmab[pcm][stream].area + idx);
 
 		if (i & 1)
 			*pg_table |= (pfn << 4);
@@ -317,11 +317,35 @@ static int hsw_pcm_hw_params(struct snd_pcm_substream *substream,
 	struct sst_hsw *hsw = pdata->hsw;
 	struct sst_module *module_data;
 	struct sst_dsp *dsp;
+	struct snd_dma_buffer *dmab;
 	enum sst_hsw_stream_type stream_type;
 	enum sst_hsw_stream_path_id path_id;
 	u32 rate, bits, map, pages, module_id;
 	u8 channels;
 	int ret;
+
+	/* check if we are being called a subsequent time */
+	if (pcm_data->allocated) {
+		ret = sst_hsw_stream_reset(hsw, pcm_data->stream);
+		if (ret < 0)
+			dev_dbg(rtd->dev, "error: reset stream failed %d\n",
+				ret);
+
+		ret = sst_hsw_stream_free(hsw, pcm_data->stream);
+		if (ret < 0) {
+			dev_dbg(rtd->dev, "error: free stream failed %d\n",
+				ret);
+			return ret;
+		}
+		pcm_data->allocated = false;
+
+		pcm_data->stream = sst_hsw_stream_new(hsw, rtd->cpu_dai->id,
+			hsw_notify_pointer, pcm_data);
+		if (pcm_data->stream == NULL) {
+			dev_err(rtd->dev, "error: failed to create stream\n");
+			return -EINVAL;
+		}
+	}
 
 	/* stream direction */
 	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
@@ -376,7 +400,15 @@ static int hsw_pcm_hw_params(struct snd_pcm_substream *substream,
 		sst_hsw_stream_set_valid(hsw, pcm_data->stream, 16);
 		break;
 	case SNDRV_PCM_FORMAT_S24_LE:
-		bits = SST_HSW_DEPTH_24BIT;
+		bits = SST_HSW_DEPTH_32BIT;
+		sst_hsw_stream_set_valid(hsw, pcm_data->stream, 24);
+		break;
+	case SNDRV_PCM_FORMAT_S8:
+		bits = SST_HSW_DEPTH_8BIT;
+		sst_hsw_stream_set_valid(hsw, pcm_data->stream, 8);
+		break;
+	case SNDRV_PCM_FORMAT_S32_LE:
+		bits = SST_HSW_DEPTH_32BIT;
 		sst_hsw_stream_set_valid(hsw, pcm_data->stream, 32);
 		break;
 	default:
@@ -416,8 +448,10 @@ static int hsw_pcm_hw_params(struct snd_pcm_substream *substream,
 		return ret;
 	}
 
-	ret = create_adsp_page_table(pdata, rtd, runtime->dma_area,
-		runtime->dma_bytes, rtd->cpu_dai->id, substream->stream);
+	dmab = snd_pcm_get_dma_buf(substream);
+
+	ret = create_adsp_page_table(substream, pdata, rtd, runtime->dma_area,
+		runtime->dma_bytes, rtd->cpu_dai->id);
 	if (ret < 0)
 		return ret;
 
@@ -430,9 +464,9 @@ static int hsw_pcm_hw_params(struct snd_pcm_substream *substream,
 		pages = runtime->dma_bytes / PAGE_SIZE;
 
 	ret = sst_hsw_stream_buffer(hsw, pcm_data->stream,
-		virt_to_phys(pdata->pcm_pg[rtd->cpu_dai->id][substream->stream]),
+		pdata->dmab[rtd->cpu_dai->id][substream->stream].addr,
 		pages, runtime->dma_bytes, 0,
-		(u32)(virt_to_phys(runtime->dma_area) >> PAGE_SHIFT));
+		snd_sgbuf_get_addr(dmab, 0) >> PAGE_SHIFT);
 	if (ret < 0) {
 		dev_err(rtd->dev, "error: failed to set DMA buffer %d\n", ret);
 		return ret;
@@ -474,6 +508,7 @@ static int hsw_pcm_hw_params(struct snd_pcm_substream *substream,
 		dev_err(rtd->dev, "error: failed to commit stream %d\n", ret);
 		return ret;
 	}
+	pcm_data->allocated = true;
 
 	ret = sst_hsw_stream_pause(hsw, pcm_data->stream, 1);
 	if (ret < 0)
@@ -541,12 +576,14 @@ static snd_pcm_uframes_t hsw_pcm_pointer(struct snd_pcm_substream *substream)
 	struct hsw_pcm_data *pcm_data = snd_soc_pcm_get_drvdata(rtd);
 	struct sst_hsw *hsw = pdata->hsw;
 	snd_pcm_uframes_t offset;
+	uint64_t ppos;
+	u32 position = sst_hsw_get_dsp_position(hsw, pcm_data->stream);
 
-	offset = bytes_to_frames(runtime,
-		sst_hsw_get_dsp_position(hsw, pcm_data->stream));
+	offset = bytes_to_frames(runtime, position);
+	ppos = sst_hsw_get_dsp_presentation_position(hsw, pcm_data->stream);
 
-	dev_dbg(rtd->dev, "PCM: DMA pointer %zu bytes\n",
-		frames_to_bytes(runtime, (u32)offset));
+	dev_dbg(rtd->dev, "PCM: DMA pointer %du bytes, pos %llu\n",
+		position, ppos);
 	return offset;
 }
 
@@ -606,6 +643,7 @@ static int hsw_pcm_close(struct snd_pcm_substream *substream)
 		dev_dbg(rtd->dev, "error: free stream failed %d\n", ret);
 		goto out;
 	}
+	pcm_data->allocated = 0;
 	pcm_data->stream = NULL;
 
 out:
@@ -621,7 +659,7 @@ static struct snd_pcm_ops hsw_pcm_ops = {
 	.hw_free	= hsw_pcm_hw_free,
 	.trigger	= hsw_pcm_trigger,
 	.pointer	= hsw_pcm_pointer,
-	.mmap		= snd_pcm_lib_default_mmap,
+	.page		= snd_pcm_sgbuf_ops_page,
 };
 
 static void hsw_pcm_free(struct snd_pcm *pcm)
@@ -632,17 +670,16 @@ static void hsw_pcm_free(struct snd_pcm *pcm)
 static int hsw_pcm_new(struct snd_soc_pcm_runtime *rtd)
 {
 	struct snd_pcm *pcm = rtd->pcm;
+	struct snd_soc_platform *platform = rtd->platform;
+	struct sst_pdata *pdata = dev_get_platdata(platform->dev);
+	struct device *dev = pdata->dma_dev;
 	int ret = 0;
-
-	ret = dma_coerce_mask_and_coherent(rtd->card->dev, DMA_BIT_MASK(32));
-	if (ret)
-		return ret;
 
 	if (pcm->streams[SNDRV_PCM_STREAM_PLAYBACK].substream ||
 			pcm->streams[SNDRV_PCM_STREAM_CAPTURE].substream) {
 		ret = snd_pcm_lib_preallocate_pages_for_all(pcm,
-			SNDRV_DMA_TYPE_DEV,
-			rtd->card->dev,
+			SNDRV_DMA_TYPE_DEV_SG,
+			dev,
 			hsw_pcm_hardware.buffer_bytes_max,
 			hsw_pcm_hardware.buffer_bytes_max);
 		if (ret) {
@@ -656,8 +693,9 @@ static int hsw_pcm_new(struct snd_soc_pcm_runtime *rtd)
 }
 
 #define HSW_FORMATS \
-	(SNDRV_PCM_FMTBIT_S20_3LE | SNDRV_PCM_FMTBIT_S16_LE |\
-	 SNDRV_PCM_FMTBIT_S32_LE)
+	(SNDRV_PCM_FMTBIT_S32_LE | SNDRV_PCM_FMTBIT_S24_LE | \
+	SNDRV_PCM_FMTBIT_S20_3LE | SNDRV_PCM_FMTBIT_S16_LE |\
+	SNDRV_PCM_FMTBIT_S8)
 
 static struct snd_soc_dai_driver hsw_dais[] = {
 	{
@@ -667,7 +705,7 @@ static struct snd_soc_dai_driver hsw_dais[] = {
 			.channels_min = 2,
 			.channels_max = 2,
 			.rates = SNDRV_PCM_RATE_48000,
-			.formats = SNDRV_PCM_FMTBIT_S16_LE,
+			.formats = SNDRV_PCM_FMTBIT_S24_LE | SNDRV_PCM_FMTBIT_S16_LE,
 		},
 	},
 	{
@@ -698,8 +736,8 @@ static struct snd_soc_dai_driver hsw_dais[] = {
 			.stream_name = "Loopback Capture",
 			.channels_min = 2,
 			.channels_max = 2,
-			.rates = SNDRV_PCM_RATE_8000_192000,
-			.formats = HSW_FORMATS,
+			.rates = SNDRV_PCM_RATE_48000,
+			.formats = SNDRV_PCM_FMTBIT_S24_LE | SNDRV_PCM_FMTBIT_S16_LE,
 		},
 	},
 	{
@@ -708,8 +746,8 @@ static struct snd_soc_dai_driver hsw_dais[] = {
 			.stream_name = "Analog Capture",
 			.channels_min = 2,
 			.channels_max = 2,
-			.rates = SNDRV_PCM_RATE_8000_192000,
-			.formats = HSW_FORMATS,
+			.rates = SNDRV_PCM_RATE_48000,
+			.formats = SNDRV_PCM_FMTBIT_S24_LE | SNDRV_PCM_FMTBIT_S16_LE,
 		},
 	},
 };
@@ -742,10 +780,13 @@ static int hsw_pcm_probe(struct snd_soc_platform *platform)
 {
 	struct sst_pdata *pdata = dev_get_platdata(platform->dev);
 	struct hsw_priv_data *priv_data;
-	int i;
+	struct device *dma_dev;
+	int i, ret = 0;
 
 	if (!pdata)
 		return -ENODEV;
+
+	dma_dev = pdata->dma_dev;
 
 	priv_data = devm_kzalloc(platform->dev, sizeof(*priv_data), GFP_KERNEL);
 	priv_data->hsw = pdata->dsp;
@@ -758,15 +799,17 @@ static int hsw_pcm_probe(struct snd_soc_platform *platform)
 
 		/* playback */
 		if (hsw_dais[i].playback.channels_min) {
-			priv_data->pcm_pg[i][0] = kzalloc(PAGE_SIZE, GFP_DMA);
-			if (priv_data->pcm_pg[i][0] == NULL)
+			ret = snd_dma_alloc_pages(SNDRV_DMA_TYPE_DEV, dma_dev,
+				PAGE_SIZE, &priv_data->dmab[i][0]);
+			if (ret < 0)
 				goto err;
 		}
 
 		/* capture */
 		if (hsw_dais[i].capture.channels_min) {
-			priv_data->pcm_pg[i][1] = kzalloc(PAGE_SIZE, GFP_DMA);
-			if (priv_data->pcm_pg[i][1] == NULL)
+			ret = snd_dma_alloc_pages(SNDRV_DMA_TYPE_DEV, dma_dev,
+				PAGE_SIZE, &priv_data->dmab[i][1]);
+			if (ret < 0)
 				goto err;
 		}
 	}
@@ -776,11 +819,11 @@ static int hsw_pcm_probe(struct snd_soc_platform *platform)
 err:
 	for (;i >= 0; i--) {
 		if (hsw_dais[i].playback.channels_min)
-			kfree(priv_data->pcm_pg[i][0]);
+			snd_dma_free_pages(&priv_data->dmab[i][0]);
 		if (hsw_dais[i].capture.channels_min)
-			kfree(priv_data->pcm_pg[i][1]);
+			snd_dma_free_pages(&priv_data->dmab[i][1]);
 	}
-	return -ENOMEM;
+	return ret;
 }
 
 static int hsw_pcm_remove(struct snd_soc_platform *platform)
@@ -791,9 +834,9 @@ static int hsw_pcm_remove(struct snd_soc_platform *platform)
 
 	for (i = 0; i < ARRAY_SIZE(hsw_dais); i++) {
 		if (hsw_dais[i].playback.channels_min)
-			kfree(priv_data->pcm_pg[i][0]);
+			snd_dma_free_pages(&priv_data->dmab[i][0]);
 		if (hsw_dais[i].capture.channels_min)
-			kfree(priv_data->pcm_pg[i][1]);
+			snd_dma_free_pages(&priv_data->dmab[i][1]);
 	}
 
 	return 0;

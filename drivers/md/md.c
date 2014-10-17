@@ -3448,6 +3448,8 @@ level_store(struct mddev *mddev, const char *buf, size_t len)
 		mddev->level = LEVEL_NONE;
 		return rv;
 	}
+	if (mddev->ro)
+		return  -EROFS;
 
 	/* request to change the personality.  Need to ensure:
 	 *  - array is not engaged in resync/recovery/reshape
@@ -3634,6 +3636,8 @@ layout_store(struct mddev *mddev, const char *buf, size_t len)
 		int err;
 		if (mddev->pers->check_reshape == NULL)
 			return -EBUSY;
+		if (mddev->ro)
+			return -EROFS;
 		mddev->new_layout = n;
 		err = mddev->pers->check_reshape(mddev);
 		if (err) {
@@ -3723,6 +3727,8 @@ chunk_size_store(struct mddev *mddev, const char *buf, size_t len)
 		int err;
 		if (mddev->pers->check_reshape == NULL)
 			return -EBUSY;
+		if (mddev->ro)
+			return -EROFS;
 		mddev->new_chunk_sectors = n >> 9;
 		err = mddev->pers->check_reshape(mddev);
 		if (err) {
@@ -5593,7 +5599,7 @@ static int get_array_info(struct mddev * mddev, void __user * arg)
 	if (mddev->in_sync)
 		info.state = (1<<MD_SB_CLEAN);
 	if (mddev->bitmap && mddev->bitmap_info.offset)
-		info.state = (1<<MD_SB_BITMAP_PRESENT);
+		info.state |= (1<<MD_SB_BITMAP_PRESENT);
 	info.active_disks  = insync;
 	info.working_disks = working;
 	info.failed_disks  = failed;
@@ -5955,7 +5961,7 @@ static int set_bitmap_file(struct mddev *mddev, int fd)
 	int err = 0;
 
 	if (mddev->pers) {
-		if (!mddev->pers->quiesce)
+		if (!mddev->pers->quiesce || !mddev->thread)
 			return -EBUSY;
 		if (mddev->recovery || mddev->sync_thread)
 			return -EBUSY;
@@ -6135,6 +6141,8 @@ static int update_size(struct mddev *mddev, sector_t num_sectors)
 	 */
 	if (mddev->sync_thread)
 		return -EBUSY;
+	if (mddev->ro)
+		return -EROFS;
 
 	rdev_for_each(rdev, mddev) {
 		sector_t avail = rdev->sectors;
@@ -6157,6 +6165,8 @@ static int update_raid_disks(struct mddev *mddev, int raid_disks)
 	/* change the number of raid disks */
 	if (mddev->pers->check_reshape == NULL)
 		return -EINVAL;
+	if (mddev->ro)
+		return -EROFS;
 	if (raid_disks <= 0 ||
 	    (mddev->max_disks && raid_disks >= mddev->max_disks))
 		return -EINVAL;
@@ -6253,7 +6263,7 @@ static int update_array_info(struct mddev *mddev, mdu_array_info_t *info)
 		rv = update_raid_disks(mddev, info->raid_disks);
 
 	if ((state ^ info->state) & (1<<MD_SB_BITMAP_PRESENT)) {
-		if (mddev->pers->quiesce == NULL)
+		if (mddev->pers->quiesce == NULL || mddev->thread == NULL)
 			return -EINVAL;
 		if (mddev->recovery || mddev->sync_thread)
 			return -EBUSY;
@@ -7366,7 +7376,7 @@ void md_do_sync(struct md_thread *thread)
 	struct mddev *mddev2;
 	unsigned int currspeed = 0,
 		 window;
-	sector_t max_sectors,j, io_sectors;
+	sector_t max_sectors,j, io_sectors, recovery_done;
 	unsigned long mark[SYNC_MARKS];
 	unsigned long update_time;
 	sector_t mark_cnt[SYNC_MARKS];
@@ -7381,8 +7391,10 @@ void md_do_sync(struct md_thread *thread)
 	/* just incase thread restarts... */
 	if (test_bit(MD_RECOVERY_DONE, &mddev->recovery))
 		return;
-	if (mddev->ro) /* never try to sync a read-only array */
+	if (mddev->ro) {/* never try to sync a read-only array */
+		set_bit(MD_RECOVERY_INTR, &mddev->recovery);
 		return;
+	}
 
 	if (test_bit(MD_RECOVERY_SYNC, &mddev->recovery)) {
 		if (test_bit(MD_RECOVERY_CHECK, &mddev->recovery)) {
@@ -7489,6 +7501,19 @@ void md_do_sync(struct md_thread *thread)
 			    rdev->recovery_offset < j)
 				j = rdev->recovery_offset;
 		rcu_read_unlock();
+
+		/* If there is a bitmap, we need to make sure all
+		 * writes that started before we added a spare
+		 * complete before we start doing a recovery.
+		 * Otherwise the write might complete and (via
+		 * bitmap_endwrite) set a bit in the bitmap after the
+		 * recovery has checked that bit and skipped that
+		 * region.
+		 */
+		if (mddev->bitmap) {
+			mddev->pers->quiesce(mddev, 1);
+			mddev->pers->quiesce(mddev, 0);
+		}
 	}
 
 	printk(KERN_INFO "md: %s of RAID array %s\n", desc, mdname(mddev));
@@ -7627,7 +7652,8 @@ void md_do_sync(struct md_thread *thread)
 		 */
 		cond_resched();
 
-		currspeed = ((unsigned long)(io_sectors-mddev->resync_mark_cnt))/2
+		recovery_done = io_sectors - atomic_read(&mddev->recovery_active);
+		currspeed = ((unsigned long)(recovery_done - mddev->resync_mark_cnt))/2
 			/((jiffies-mddev->resync_mark)/HZ +1) +1;
 
 		if (currspeed > speed_min(mddev)) {
@@ -7824,6 +7850,7 @@ void md_check_recovery(struct mddev *mddev)
 			/* There is no thread, but we need to call
 			 * ->spare_active and clear saved_raid_disk
 			 */
+			set_bit(MD_RECOVERY_INTR, &mddev->recovery);
 			md_reap_sync_thread(mddev);
 			clear_bit(MD_RECOVERY_NEEDED, &mddev->recovery);
 			goto unlock;
@@ -8330,7 +8357,7 @@ static int md_clear_badblocks(struct badblocks *bb, sector_t s, int sectors)
 			if (a < s) {
 				/* we need to split this range */
 				if (bb->count >= MD_MAX_BADBLOCKS) {
-					rv = 0;
+					rv = -ENOSPC;
 					goto out;
 				}
 				memmove(p+lo+1, p+lo, (bb->count - lo) * 8);
@@ -8516,7 +8543,8 @@ static int md_notify_reboot(struct notifier_block *this,
 		if (mddev_trylock(mddev)) {
 			if (mddev->pers)
 				__md_stop_writes(mddev);
-			mddev->safemode = 2;
+			if (mddev->persistent)
+				mddev->safemode = 2;
 			mddev_unlock(mddev);
 		}
 		need_delay = 1;
@@ -8565,7 +8593,7 @@ static int __init md_init(void)
 		goto err_mdp;
 	mdp_major = ret;
 
-	blk_register_region(MKDEV(MD_MAJOR, 0), 1UL<<MINORBITS, THIS_MODULE,
+	blk_register_region(MKDEV(MD_MAJOR, 0), 512, THIS_MODULE,
 			    md_probe, NULL, NULL);
 	blk_register_region(MKDEV(mdp_major, 0), 1UL<<MINORBITS, THIS_MODULE,
 			    md_probe, NULL, NULL);
@@ -8660,7 +8688,7 @@ static __exit void md_exit(void)
 	struct list_head *tmp;
 	int delay = 1;
 
-	blk_unregister_region(MKDEV(MD_MAJOR,0), 1U << MINORBITS);
+	blk_unregister_region(MKDEV(MD_MAJOR,0), 512);
 	blk_unregister_region(MKDEV(mdp_major,0), 1U << MINORBITS);
 
 	unregister_blkdev(MD_MAJOR,"md");

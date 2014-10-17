@@ -68,7 +68,6 @@
 			};
 
 			serial@12000 {
-				clock-frequency = <200000000>;
 				status = "okay";
 			};
 
@@ -79,6 +78,11 @@
 				};
 			};
 
+			sata@a0000 {
+				status = "okay";
+				nr-ports = <2>;
+			};
+
 			nand: nand@d0000 {
 				pinctrl-0 = <&nand_pins>;
 				pinctrl-names = "default";
@@ -87,6 +91,8 @@
 				marvell,nand-keep-config;
 				marvell,nand-enable-arbiter;
 				nand-on-flash-bbt;
+				nand-ecc-strength = <4>;
+				nand-ecc-step-size = <512>;
 
 				partition@0 {
 					label = "U-Boot";
@@ -102,12 +108,46 @@
 				};
 			};
 
+			usb@54000 {
+				status = "okay";
+			};
+
+			usb3@58000 {
+				status = "okay";
+			};
+
 			mvsdio@d4000 {
 				pinctrl-0 = <&sdio_pins &sdio_st_pins>;
 				pinctrl-names = "default";
 				status = "okay";
 				cd-gpios = <&gpio1 12 GPIO_ACTIVE_HIGH>;
 				wp-gpios = <&gpio1 13 GPIO_ACTIVE_HIGH>;
+			};
+
+			mdio {
+				phy0: ethernet-phy@0 {
+					reg = <0>;
+				};
+
+				phy3: ethernet-phy@3 {
+					reg = <3>;
+				};
+			};
+
+			ethernet@f0000 {
+				status = "okay";
+
+				eth0@c4000 {
+					status = "okay";
+					phy = <&phy0>;
+					phy-mode = "rgmii-id";
+				};
+
+				eth1@c5000 {
+					status = "okay";
+					phy = <&phy3>;
+					phy-mode = "gmii";
+				};
 			};
 		};
 

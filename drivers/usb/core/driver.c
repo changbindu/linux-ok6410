@@ -417,10 +417,11 @@ static int usb_unbind_interface(struct device *dev)
 	 */
 	lpm_disable_error = usb_unlocked_disable_lpm(udev);
 
-	/* Terminate all URBs for this interface unless the driver
-	 * supports "soft" unbinding.
+	/*
+	 * Terminate all URBs for this interface unless the driver
+	 * supports "soft" unbinding and the device is still present.
 	 */
-	if (!driver->soft_unbind)
+	if (!driver->soft_unbind || udev->state == USB_STATE_NOTATTACHED)
 		usb_disable_interface(udev, intf, false);
 
 	driver->disconnect(intf);
@@ -1822,10 +1823,13 @@ int usb_runtime_suspend(struct device *dev)
 	if (status == -EAGAIN || status == -EBUSY)
 		usb_mark_last_busy(udev);
 
-	/* The PM core reacts badly unless the return code is 0,
-	 * -EAGAIN, or -EBUSY, so always return -EBUSY on an error.
+	/*
+	 * The PM core reacts badly unless the return code is 0,
+	 * -EAGAIN, or -EBUSY, so always return -EBUSY on an error
+	 * (except for root hubs, because they don't suspend through
+	 * an upstream port like other USB devices).
 	 */
-	if (status != 0)
+	if (status != 0 && udev->parent)
 		return -EBUSY;
 	return status;
 }
