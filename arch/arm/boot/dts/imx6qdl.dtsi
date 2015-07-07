@@ -53,6 +53,7 @@
 		interrupt-controller;
 		reg = <0x00a01000 0x1000>,
 		      <0x00a00100 0x100>;
+		interrupt-parent = <&intc>;
 	};
 
 	clocks {
@@ -82,7 +83,7 @@
 		#address-cells = <1>;
 		#size-cells = <1>;
 		compatible = "simple-bus";
-		interrupt-parent = <&intc>;
+		interrupt-parent = <&gpc>;
 		ranges;
 
 		dma_apbh: dma-apbh@00110000 {
@@ -122,6 +123,7 @@
 			compatible = "arm,cortex-a9-twd-timer";
 			reg = <0x00a00600 0x20>;
 			interrupts = <1 13 0xf01>;
+			interrupt-parent = <&intc>;
 			clocks = <&clks IMX6QDL_CLK_TWD>;
 		};
 
@@ -137,7 +139,9 @@
 
 		pcie: pcie@0x01000000 {
 			compatible = "fsl,imx6q-pcie", "snps,dw-pcie";
-			reg = <0x01ffc000 0x4000>; /* DBI */
+			reg = <0x01ffc000 0x04000>,
+			      <0x01f00000 0x80000>;
+			reg-names = "dbi", "config";
 			#address-cells = <3>;
 			#size-cells = <2>;
 			device_type = "pci";
@@ -273,11 +277,14 @@
 				};
 
 				ssi1: ssi@02028000 {
+					#sound-dai-cells = <0>;
 					compatible = "fsl,imx6q-ssi",
 							"fsl,imx51-ssi";
 					reg = <0x02028000 0x4000>;
 					interrupts = <0 46 IRQ_TYPE_LEVEL_HIGH>;
-					clocks = <&clks IMX6QDL_CLK_SSI1_IPG>;
+					clocks = <&clks IMX6QDL_CLK_SSI1_IPG>,
+						 <&clks IMX6QDL_CLK_SSI1>;
+					clock-names = "ipg", "baud";
 					dmas = <&sdma 37 1 0>,
 					       <&sdma 38 1 0>;
 					dma-names = "rx", "tx";
@@ -286,11 +293,14 @@
 				};
 
 				ssi2: ssi@0202c000 {
+					#sound-dai-cells = <0>;
 					compatible = "fsl,imx6q-ssi",
 							"fsl,imx51-ssi";
 					reg = <0x0202c000 0x4000>;
 					interrupts = <0 47 IRQ_TYPE_LEVEL_HIGH>;
-					clocks = <&clks IMX6QDL_CLK_SSI2_IPG>;
+					clocks = <&clks IMX6QDL_CLK_SSI2_IPG>,
+						 <&clks IMX6QDL_CLK_SSI2>;
+					clock-names = "ipg", "baud";
 					dmas = <&sdma 41 1 0>,
 					       <&sdma 42 1 0>;
 					dma-names = "rx", "tx";
@@ -299,11 +309,14 @@
 				};
 
 				ssi3: ssi@02030000 {
+					#sound-dai-cells = <0>;
 					compatible = "fsl,imx6q-ssi",
 							"fsl,imx51-ssi";
 					reg = <0x02030000 0x4000>;
 					interrupts = <0 48 IRQ_TYPE_LEVEL_HIGH>;
-					clocks = <&clks IMX6QDL_CLK_SSI3_IPG>;
+					clocks = <&clks IMX6QDL_CLK_SSI3_IPG>,
+						 <&clks IMX6QDL_CLK_SSI3>;
+					clock-names = "ipg", "baud";
 					dmas = <&sdma 45 1 0>,
 					       <&sdma 46 1 0>;
 					dma-names = "rx", "tx";
@@ -322,9 +335,16 @@
 			};
 
 			vpu: vpu@02040000 {
+				compatible = "cnm,coda960";
 				reg = <0x02040000 0x3c000>;
-				interrupts = <0 3 IRQ_TYPE_LEVEL_HIGH>,
-				             <0 12 IRQ_TYPE_LEVEL_HIGH>;
+				interrupts = <0 12 IRQ_TYPE_LEVEL_HIGH>,
+					     <0 3 IRQ_TYPE_LEVEL_HIGH>;
+				interrupt-names = "bit", "jpeg";
+				clocks = <&clks IMX6QDL_CLK_VPU_AXI>,
+					 <&clks IMX6QDL_CLK_MMDC_CH0_AXI>;
+				clock-names = "per", "ahb";
+				resets = <&src 1>;
+				iram = <&ocram>;
 			};
 
 			aipstz@0207c000 { /* AIPSTZ1 */
@@ -339,6 +359,7 @@
 				clocks = <&clks IMX6QDL_CLK_IPG>,
 					 <&clks IMX6QDL_CLK_PWM1>;
 				clock-names = "ipg", "per";
+				status = "disabled";
 			};
 
 			pwm2: pwm@02084000 {
@@ -349,6 +370,7 @@
 				clocks = <&clks IMX6QDL_CLK_IPG>,
 					 <&clks IMX6QDL_CLK_PWM2>;
 				clock-names = "ipg", "per";
+				status = "disabled";
 			};
 
 			pwm3: pwm@02088000 {
@@ -359,6 +381,7 @@
 				clocks = <&clks IMX6QDL_CLK_IPG>,
 					 <&clks IMX6QDL_CLK_PWM3>;
 				clock-names = "ipg", "per";
+				status = "disabled";
 			};
 
 			pwm4: pwm@0208c000 {
@@ -369,6 +392,7 @@
 				clocks = <&clks IMX6QDL_CLK_IPG>,
 					 <&clks IMX6QDL_CLK_PWM4>;
 				clock-names = "ipg", "per";
+				status = "disabled";
 			};
 
 			can1: flexcan@02090000 {
@@ -396,8 +420,9 @@
 				reg = <0x02098000 0x4000>;
 				interrupts = <0 55 IRQ_TYPE_LEVEL_HIGH>;
 				clocks = <&clks IMX6QDL_CLK_GPT_IPG>,
-					 <&clks IMX6QDL_CLK_GPT_IPG_PER>;
-				clock-names = "ipg", "per";
+					 <&clks IMX6QDL_CLK_GPT_IPG_PER>,
+					 <&clks IMX6QDL_CLK_GPT_3M>;
+				clock-names = "ipg", "per", "osc_per";
 			};
 
 			gpio1: gpio@0209c000 {
@@ -579,7 +604,7 @@
 					regulator-name = "vddpu";
 					regulator-min-microvolt = <725000>;
 					regulator-max-microvolt = <1450000>;
-					regulator-always-on;
+					regulator-enable-ramp-delay = <150>;
 					anatop-reg-offset = <0x140>;
 					anatop-vol-bit-shift = <9>;
 					anatop-vol-bit-width = <5>;
@@ -639,11 +664,17 @@
 				#size-cells = <1>;
 				ranges = <0 0x020cc000 0x4000>;
 
-				snvs-rtc-lp@34 {
+				snvs_rtc: snvs-rtc-lp@34 {
 					compatible = "fsl,sec-v4.0-mon-rtc-lp";
 					reg = <0x34 0x58>;
 					interrupts = <0 19 IRQ_TYPE_LEVEL_HIGH>,
 						     <0 20 IRQ_TYPE_LEVEL_HIGH>;
+				};
+
+				snvs_poweroff: snvs-poweroff@38 {
+					compatible = "fsl,sec-v4.0-poweroff";
+					reg = <0x38 0x4>;
+					status = "disabled";
 				};
 			};
 
@@ -668,8 +699,19 @@
 			gpc: gpc@020dc000 {
 				compatible = "fsl,imx6q-gpc";
 				reg = <0x020dc000 0x4000>;
+				interrupt-controller;
+				#interrupt-cells = <3>;
 				interrupts = <0 89 IRQ_TYPE_LEVEL_HIGH>,
 					     <0 90 IRQ_TYPE_LEVEL_HIGH>;
+				interrupt-parent = <&intc>;
+				pu-supply = <&reg_pu>;
+				clocks = <&clks IMX6QDL_CLK_GPU3D_CORE>,
+					 <&clks IMX6QDL_CLK_GPU3D_SHADER>,
+					 <&clks IMX6QDL_CLK_GPU2D_CORE>,
+					 <&clks IMX6QDL_CLK_GPU2D_AXI>,
+					 <&clks IMX6QDL_CLK_OPENVG_AXI>,
+					 <&clks IMX6QDL_CLK_VPU_AXI>;
+				#power-domain-cells = <1>;
 			};
 
 			gpr: iomuxc-gpr@020e0000 {
@@ -820,6 +862,7 @@
 				clocks = <&clks IMX6QDL_CLK_USBOH3>;
 				fsl,usbphy = <&usbphy2>;
 				fsl,usbmisc = <&usbmisc 1>;
+				dr_mode = "host";
 				status = "disabled";
 			};
 
@@ -829,6 +872,7 @@
 				interrupts = <0 41 IRQ_TYPE_LEVEL_HIGH>;
 				clocks = <&clks IMX6QDL_CLK_USBOH3>;
 				fsl,usbmisc = <&usbmisc 2>;
+				dr_mode = "host";
 				status = "disabled";
 			};
 
@@ -838,6 +882,7 @@
 				interrupts = <0 42 IRQ_TYPE_LEVEL_HIGH>;
 				clocks = <&clks IMX6QDL_CLK_USBOH3>;
 				fsl,usbmisc = <&usbmisc 3>;
+				dr_mode = "host";
 				status = "disabled";
 			};
 
@@ -997,19 +1042,24 @@
 				reg = <0x021e0000 0x4000>;
 				status = "disabled";
 
-				port@0 {
-					reg = <0>;
+				ports {
+					#address-cells = <1>;
+					#size-cells = <0>;
 
-					mipi_mux_0: endpoint {
-						remote-endpoint = <&ipu1_di0_mipi>;
+					port@0 {
+						reg = <0>;
+
+						mipi_mux_0: endpoint {
+							remote-endpoint = <&ipu1_di0_mipi>;
+						};
 					};
-				};
 
-				port@1 {
-					reg = <1>;
+					port@1 {
+						reg = <1>;
 
-					mipi_mux_1: endpoint {
-						remote-endpoint = <&ipu1_di1_mipi>;
+						mipi_mux_1: endpoint {
+							remote-endpoint = <&ipu1_di1_mipi>;
+						};
 					};
 				};
 			};

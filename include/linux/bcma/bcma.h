@@ -267,7 +267,7 @@ struct bcma_device {
 	u8 core_unit;
 
 	u32 addr;
-	u32 addr1;
+	u32 addr_s[8];
 	u32 wrap;
 
 	void __iomem *io_addr;
@@ -318,11 +318,14 @@ struct bcma_bus {
 	const struct bcma_host_ops *ops;
 
 	enum bcma_hosttype hosttype;
+	bool host_is_pcie2; /* Used for BCMA_HOSTTYPE_PCI only */
 	union {
 		/* Pointer to the PCI bus (only for BCMA_HOSTTYPE_PCI) */
 		struct pci_dev *host_pci;
 		/* Pointer to the SDIO device (only for BCMA_HOSTTYPE_SDIO) */
 		struct sdio_func *host_sdio;
+		/* Pointer to platform device (only for BCMA_HOSTTYPE_SOC) */
+		struct platform_device *host_pdev;
 	};
 
 	struct bcma_chipinfo chipinfo;
@@ -332,10 +335,10 @@ struct bcma_bus {
 	struct bcma_device *mapped_core;
 	struct list_head cores;
 	u8 nr_cores;
-	u8 init_done:1;
 	u8 num;
 
 	struct bcma_drv_cc drv_cc;
+	struct bcma_drv_cc_b drv_cc_b;
 	struct bcma_drv_pci drv_pci[2];
 	struct bcma_drv_pcie2 drv_pcie2;
 	struct bcma_drv_mips drv_mips;
@@ -431,6 +434,27 @@ static inline struct bcma_device *bcma_find_core(struct bcma_bus *bus,
 	return bcma_find_core_unit(bus, coreid, 0);
 }
 
+#ifdef CONFIG_BCMA_HOST_PCI
+extern void bcma_host_pci_up(struct bcma_bus *bus);
+extern void bcma_host_pci_down(struct bcma_bus *bus);
+extern int bcma_host_pci_irq_ctl(struct bcma_bus *bus,
+				 struct bcma_device *core, bool enable);
+#else
+static inline void bcma_host_pci_up(struct bcma_bus *bus)
+{
+}
+static inline void bcma_host_pci_down(struct bcma_bus *bus)
+{
+}
+static inline int bcma_host_pci_irq_ctl(struct bcma_bus *bus,
+					struct bcma_device *core, bool enable)
+{
+	if (bus->hosttype == BCMA_HOSTTYPE_PCI)
+		return -ENOTSUPP;
+	return 0;
+}
+#endif
+
 extern bool bcma_core_is_enabled(struct bcma_device *core);
 extern void bcma_core_disable(struct bcma_device *core, u32 flags);
 extern int bcma_core_enable(struct bcma_device *core, u32 flags);
@@ -444,5 +468,7 @@ extern u32 bcma_chipco_pll_read(struct bcma_drv_cc *cc, u32 offset);
 #define  BCMA_DMA_TRANSLATION_DMA32_CMT	0x40000000 /* Client Mode Translation for 32-bit DMA */
 #define  BCMA_DMA_TRANSLATION_DMA64_CMT	0x80000000 /* Client Mode Translation for 64-bit DMA */
 extern u32 bcma_core_dma_translation(struct bcma_device *core);
+
+extern unsigned int bcma_core_irq(struct bcma_device *core, int num);
 
 #endif /* LINUX_BCMA_H_ */

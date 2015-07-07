@@ -161,8 +161,8 @@ static unsigned int init_lirc_timer(void)
 			     || (now.tv_sec == tv.tv_sec
 				 && now.tv_usec < tv.tv_usec)));
 
-	timeelapsed = ((now.tv_sec + 1 - tv.tv_sec)*1000000
-		     + (now.tv_usec - tv.tv_usec));
+	timeelapsed = (now.tv_sec + 1 - tv.tv_sec)*1000000
+		     + (now.tv_usec - tv.tv_usec);
 	if (count >= 1000 && timeelapsed > 0) {
 		if (default_timer == 0) {
 			/* autodetect timer */
@@ -177,10 +177,9 @@ static unsigned int init_lirc_timer(void)
 			pr_notice("using default timer: %u Hz\n",
 				  default_timer);
 			return default_timer;
-		} else {
-			pr_info("%u Hz timer detected\n", newtimer);
-			return newtimer; /* use detected value */
 		}
+		pr_info("%u Hz timer detected\n", newtimer);
+		return newtimer; /* use detected value */
 	}
 
 	pr_notice("no timer detected\n");
@@ -337,7 +336,7 @@ static ssize_t lirc_read(struct file *filep, char __user *buf, size_t n,
 	set_current_state(TASK_INTERRUPTIBLE);
 	while (count < n) {
 		if (rptr != wptr) {
-			if (copy_to_user(buf+count, (char *) &rbuf[rptr],
+			if (copy_to_user(buf+count, &rbuf[rptr],
 					 sizeof(int))) {
 				result = -EFAULT;
 				break;
@@ -606,7 +605,6 @@ static struct platform_driver lirc_parallel_driver = {
 	.resume	= lirc_parallel_resume,
 	.driver	= {
 		.name	= LIRC_DRIVER_NAME,
-		.owner	= THIS_MODULE,
 	},
 };
 

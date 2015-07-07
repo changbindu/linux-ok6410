@@ -127,7 +127,7 @@ static const struct bcma_device_id b43_bcma_tbl[] = {
 	BCMA_CORE(BCMA_MANUF_BCM, BCMA_CORE_80211, 0x1E, BCMA_ANY_CLASS),
 	BCMA_CORE(BCMA_MANUF_BCM, BCMA_CORE_80211, 0x28, BCMA_ANY_CLASS),
 	BCMA_CORE(BCMA_MANUF_BCM, BCMA_CORE_80211, 0x2A, BCMA_ANY_CLASS),
-	BCMA_CORETABLE_END
+	{},
 };
 MODULE_DEVICE_TABLE(bcma, b43_bcma_tbl);
 #endif
@@ -144,7 +144,7 @@ static const struct ssb_device_id b43_ssb_tbl[] = {
 	SSB_DEVICE(SSB_VENDOR_BROADCOM, SSB_DEV_80211, 13),
 	SSB_DEVICE(SSB_VENDOR_BROADCOM, SSB_DEV_80211, 15),
 	SSB_DEVICE(SSB_VENDOR_BROADCOM, SSB_DEV_80211, 16),
-	SSB_DEVTABLE_END
+	{},
 };
 MODULE_DEVICE_TABLE(ssb, b43_ssb_tbl);
 #endif
@@ -1204,6 +1204,36 @@ void b43_power_saving_ctl_bits(struct b43_wldev *dev, unsigned int ps_flags)
 	}
 }
 
+/* http://bcm-v4.sipsolutions.net/802.11/PHY/BmacCorePllReset */
+void b43_wireless_core_phy_pll_reset(struct b43_wldev *dev)
+{
+	struct bcma_drv_cc *bcma_cc __maybe_unused;
+	struct ssb_chipcommon *ssb_cc __maybe_unused;
+
+	switch (dev->dev->bus_type) {
+#ifdef CONFIG_B43_BCMA
+	case B43_BUS_BCMA:
+		bcma_cc = &dev->dev->bdev->bus->drv_cc;
+
+		bcma_cc_write32(bcma_cc, BCMA_CC_CHIPCTL_ADDR, 0);
+		bcma_cc_mask32(bcma_cc, BCMA_CC_CHIPCTL_DATA, ~0x4);
+		bcma_cc_set32(bcma_cc, BCMA_CC_CHIPCTL_DATA, 0x4);
+		bcma_cc_mask32(bcma_cc, BCMA_CC_CHIPCTL_DATA, ~0x4);
+		break;
+#endif
+#ifdef CONFIG_B43_SSB
+	case B43_BUS_SSB:
+		ssb_cc = &dev->dev->sdev->bus->chipco;
+
+		chipco_write32(ssb_cc, SSB_CHIPCO_CHIPCTL_ADDR, 0);
+		chipco_mask32(ssb_cc, SSB_CHIPCO_CHIPCTL_DATA, ~0x4);
+		chipco_set32(ssb_cc, SSB_CHIPCO_CHIPCTL_DATA, 0x4);
+		chipco_mask32(ssb_cc, SSB_CHIPCO_CHIPCTL_DATA, ~0x4);
+		break;
+#endif
+	}
+}
+
 #ifdef CONFIG_B43_BCMA
 static void b43_bcma_phy_reset(struct b43_wldev *dev)
 {
@@ -1231,6 +1261,23 @@ static void b43_bcma_wireless_core_reset(struct b43_wldev *dev, bool gmode)
 	if (gmode)
 		flags |= B43_BCMA_IOCTL_GMODE;
 	b43_device_enable(dev, flags);
+
+	if (dev->phy.type == B43_PHYTYPE_AC) {
+		u16 tmp;
+
+		tmp = bcma_aread32(dev->dev->bdev, BCMA_IOCTL);
+		tmp &= ~B43_BCMA_IOCTL_DAC;
+		tmp |= 0x100;
+		bcma_awrite32(dev->dev->bdev, BCMA_IOCTL, tmp);
+
+		tmp = bcma_aread32(dev->dev->bdev, BCMA_IOCTL);
+		tmp &= ~B43_BCMA_IOCTL_PHY_CLKEN;
+		bcma_awrite32(dev->dev->bdev, BCMA_IOCTL, tmp);
+
+		tmp = bcma_aread32(dev->dev->bdev, BCMA_IOCTL);
+		tmp |= B43_BCMA_IOCTL_PHY_CLKEN;
+		bcma_awrite32(dev->dev->bdev, BCMA_IOCTL, tmp);
+	}
 
 	bcma_core_set_clockmode(dev->dev->bdev, BCMA_CLKMODE_FAST);
 	b43_bcma_phy_reset(dev);
@@ -1571,12 +1618,26 @@ static void b43_write_beacon_template(struct b43_wldev *dev,
 	unsigned int rate;
 	u16 ctl;
 	int antenna;
-	struct ieee80211_tx_info *info = IEEE80211_SKB_CB(dev->wl->current_beacon);
+	struct ieee80211_tx_info *info;
+	unsigned long flags;
+	struct sk_buff *beacon_skb;
 
-	bcn = (const struct ieee80211_mgmt *)(dev->wl->current_beacon->data);
-	len = min_t(size_t, dev->wl->current_beacon->len,
-		  0x200 - sizeof(struct b43_plcp_hdr6));
+	spin_lock_irqsave(&dev->wl->beacon_lock, flags);
+	info = IEEE80211_SKB_CB(dev->wl->current_beacon);
 	rate = ieee80211_get_tx_rate(dev->wl->hw, info)->hw_value;
+	/* Clone the beacon, so it cannot go away, while we write it to hw. */
+	beacon_skb = skb_clone(dev->wl->current_beacon, GFP_ATOMIC);
+	spin_unlock_irqrestore(&dev->wl->beacon_lock, flags);
+
+	if (!beacon_skb) {
+		b43dbg(dev->wl, "Could not upload beacon. "
+		       "Failed to clone beacon skb.");
+		return;
+	}
+
+	bcn = (const struct ieee80211_mgmt *)(beacon_skb->data);
+	len = min_t(size_t, beacon_skb->len,
+		    0x200 - sizeof(struct b43_plcp_hdr6));
 
 	b43_write_template_common(dev, (const u8 *)bcn,
 				  len, ram_offset, shm_size_offset, rate);
@@ -1644,6 +1705,8 @@ static void b43_write_beacon_template(struct b43_wldev *dev,
 				B43_SHM_SH_DTIMPER, 0);
 	}
 	b43dbg(dev->wl, "Updated beacon template at 0x%x\n", ram_offset);
+
+	dev_kfree_skb_any(beacon_skb);
 }
 
 static void b43_upload_beacon0(struct b43_wldev *dev)
@@ -1760,13 +1823,13 @@ static void b43_beacon_update_trigger_work(struct work_struct *work)
 	mutex_unlock(&wl->mutex);
 }
 
-/* Asynchronously update the packet templates in template RAM.
- * Locking: Requires wl->mutex to be locked. */
+/* Asynchronously update the packet templates in template RAM. */
 static void b43_update_templates(struct b43_wl *wl)
 {
-	struct sk_buff *beacon;
+	struct sk_buff *beacon, *old_beacon;
+	unsigned long flags;
 
-	/* This is the top half of the ansynchronous beacon update.
+	/* This is the top half of the asynchronous beacon update.
 	 * The bottom half is the beacon IRQ.
 	 * Beacon update must be asynchronous to avoid sending an
 	 * invalid beacon. This can happen for example, if the firmware
@@ -1780,12 +1843,17 @@ static void b43_update_templates(struct b43_wl *wl)
 	if (unlikely(!beacon))
 		return;
 
-	if (wl->current_beacon)
-		dev_kfree_skb_any(wl->current_beacon);
+	spin_lock_irqsave(&wl->beacon_lock, flags);
+	old_beacon = wl->current_beacon;
 	wl->current_beacon = beacon;
 	wl->beacon0_uploaded = false;
 	wl->beacon1_uploaded = false;
+	spin_unlock_irqrestore(&wl->beacon_lock, flags);
+
 	ieee80211_queue_work(wl->hw, &wl->beacon_update_trigger);
+
+	if (old_beacon)
+		dev_kfree_skb_any(old_beacon);
 }
 
 static void b43_set_beacon_int(struct b43_wldev *dev, u16 beacon_int)
@@ -2985,7 +3053,22 @@ void b43_mac_switch_freq(struct b43_wldev *dev, u8 spurmode)
 {
 	u16 chip_id = dev->dev->chip_id;
 
-	if (chip_id == BCMA_CHIP_ID_BCM43131 ||
+	if (chip_id == BCMA_CHIP_ID_BCM4331) {
+		switch (spurmode) {
+		case 2: /* 168 Mhz: 2^26/168 = 0x61862 */
+			b43_write16(dev, B43_MMIO_TSF_CLK_FRAC_LOW, 0x1862);
+			b43_write16(dev, B43_MMIO_TSF_CLK_FRAC_HIGH, 0x6);
+			break;
+		case 1: /* 164 Mhz: 2^26/164 = 0x63e70 */
+			b43_write16(dev, B43_MMIO_TSF_CLK_FRAC_LOW, 0x3e70);
+			b43_write16(dev, B43_MMIO_TSF_CLK_FRAC_HIGH, 0x6);
+			break;
+		default: /* 160 Mhz: 2^26/160 = 0x66666 */
+			b43_write16(dev, B43_MMIO_TSF_CLK_FRAC_LOW, 0x6666);
+			b43_write16(dev, B43_MMIO_TSF_CLK_FRAC_HIGH, 0x6);
+			break;
+		}
+	} else if (chip_id == BCMA_CHIP_ID_BCM43131 ||
 	    chip_id == BCMA_CHIP_ID_BCM43217 ||
 	    chip_id == BCMA_CHIP_ID_BCM43222 ||
 	    chip_id == BCMA_CHIP_ID_BCM43224 ||
@@ -3106,6 +3189,7 @@ static void b43_rate_memory_init(struct b43_wldev *dev)
 	case B43_PHYTYPE_HT:
 	case B43_PHYTYPE_LCN:
 		b43_rate_memory_write(dev, B43_OFDM_RATE_6MB, 1);
+		b43_rate_memory_write(dev, B43_OFDM_RATE_9MB, 1);
 		b43_rate_memory_write(dev, B43_OFDM_RATE_12MB, 1);
 		b43_rate_memory_write(dev, B43_OFDM_RATE_18MB, 1);
 		b43_rate_memory_write(dev, B43_OFDM_RATE_24MB, 1);
@@ -3884,6 +3968,12 @@ static int b43_switch_band(struct b43_wldev *dev,
 	return 0;
 }
 
+static void b43_set_beacon_listen_interval(struct b43_wldev *dev, u16 interval)
+{
+	interval = min_t(u16, interval, (u16)0xFF);
+	b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_BCN_LI, interval);
+}
+
 /* Write the short and long frame retry limit values. */
 static void b43_set_retry_limits(struct b43_wldev *dev,
 				 unsigned int short_retry,
@@ -3911,6 +4001,9 @@ static int b43_op_config(struct ieee80211_hw *hw, u32 changed)
 
 	mutex_lock(&wl->mutex);
 	b43_mac_suspend(dev);
+
+	if (changed & IEEE80211_CONF_CHANGE_LISTEN_INTERVAL)
+		b43_set_beacon_listen_interval(dev, conf->listen_interval);
 
 	if (changed & IEEE80211_CONF_CHANGE_CHANNEL) {
 		phy->chandef = &conf->chandef;
@@ -4039,7 +4132,7 @@ static void b43_op_bss_info_changed(struct ieee80211_hw *hw,
 		if (conf->bssid)
 			memcpy(wl->bssid, conf->bssid, ETH_ALEN);
 		else
-			memset(wl->bssid, 0, ETH_ALEN);
+			eth_zero_addr(wl->bssid);
 	}
 
 	if (b43_status(dev) >= B43_STAT_INITIALIZED) {
@@ -4263,6 +4356,7 @@ redo:
 	mutex_unlock(&wl->mutex);
 	cancel_delayed_work_sync(&dev->periodic_work);
 	cancel_work_sync(&wl->tx_work);
+	b43_leds_stop(dev);
 	mutex_lock(&wl->mutex);
 	dev = wl->current_dev;
 	if (!dev || b43_status(dev) < B43_STAT_STARTED) {
@@ -4450,6 +4544,12 @@ static int b43_phy_versioning(struct b43_wldev *dev)
 			unsupported = 1;
 		break;
 #endif
+#ifdef CONFIG_B43_PHY_AC
+	case B43_PHYTYPE_AC:
+		if (phy_rev > 1)
+			unsupported = 1;
+		break;
+#endif
 	default:
 		unsupported = 1;
 	}
@@ -4466,10 +4566,10 @@ static int b43_phy_versioning(struct b43_wldev *dev)
 	if (core_rev == 40 || core_rev == 42) {
 		radio_manuf = 0x17F;
 
-		b43_write16(dev, B43_MMIO_RADIO24_CONTROL, 0);
+		b43_write16f(dev, B43_MMIO_RADIO24_CONTROL, 0);
 		radio_rev = b43_read16(dev, B43_MMIO_RADIO24_DATA);
 
-		b43_write16(dev, B43_MMIO_RADIO24_CONTROL, 1);
+		b43_write16f(dev, B43_MMIO_RADIO24_CONTROL, 1);
 		radio_id = b43_read16(dev, B43_MMIO_RADIO24_DATA);
 
 		radio_ver = 0; /* Is there version somewhere? */
@@ -4477,7 +4577,7 @@ static int b43_phy_versioning(struct b43_wldev *dev)
 		u16 radio24[3];
 
 		for (tmp = 0; tmp < 3; tmp++) {
-			b43_write16(dev, B43_MMIO_RADIO24_CONTROL, tmp);
+			b43_write16f(dev, B43_MMIO_RADIO24_CONTROL, tmp);
 			radio24[tmp] = b43_read16(dev, B43_MMIO_RADIO24_DATA);
 		}
 
@@ -4494,13 +4594,12 @@ static int b43_phy_versioning(struct b43_wldev *dev)
 			else
 				tmp = 0x5205017F;
 		} else {
-			b43_write16(dev, B43_MMIO_RADIO_CONTROL,
-				    B43_RADIOCTL_ID);
+			b43_write16f(dev, B43_MMIO_RADIO_CONTROL,
+				     B43_RADIOCTL_ID);
 			tmp = b43_read16(dev, B43_MMIO_RADIO_DATA_LOW);
-			b43_write16(dev, B43_MMIO_RADIO_CONTROL,
-				    B43_RADIOCTL_ID);
-			tmp |= (u32)b43_read16(dev, B43_MMIO_RADIO_DATA_HIGH)
-				<< 16;
+			b43_write16f(dev, B43_MMIO_RADIO_CONTROL,
+				     B43_RADIOCTL_ID);
+			tmp |= b43_read16(dev, B43_MMIO_RADIO_DATA_HIGH) << 16;
 		}
 		radio_manuf = (tmp & 0x00000FFF);
 		radio_id = (tmp & 0x0FFFF000) >> 12;
@@ -4545,6 +4644,10 @@ static int b43_phy_versioning(struct b43_wldev *dev)
 		break;
 	case B43_PHYTYPE_LCN:
 		if (radio_id != 0x2064)
+			unsupported = 1;
+		break;
+	case B43_PHYTYPE_AC:
+		if (radio_id != 0x2069)
 			unsupported = 1;
 		break;
 	default:
@@ -4716,7 +4819,7 @@ static void b43_wireless_core_exit(struct b43_wldev *dev)
 	switch (dev->dev->bus_type) {
 #ifdef CONFIG_B43_BCMA
 	case B43_BUS_BCMA:
-		bcma_core_pci_down(dev->dev->bdev->bus);
+		bcma_host_pci_down(dev->dev->bdev->bus);
 		break;
 #endif
 #ifdef CONFIG_B43_SSB
@@ -4763,9 +4866,9 @@ static int b43_wireless_core_init(struct b43_wldev *dev)
 	switch (dev->dev->bus_type) {
 #ifdef CONFIG_B43_BCMA
 	case B43_BUS_BCMA:
-		bcma_core_pci_irq_ctl(&dev->dev->bdev->bus->drv_pci[0],
+		bcma_host_pci_irq_ctl(dev->dev->bdev->bus,
 				      dev->dev->bdev, true);
-		bcma_core_pci_up(dev->dev->bdev->bus);
+		bcma_host_pci_up(dev->dev->bdev->bus);
 		break;
 #endif
 #ifdef CONFIG_B43_SSB
@@ -4813,6 +4916,16 @@ static int b43_wireless_core_init(struct b43_wldev *dev)
 	hf &= ~B43_HF_SKCFPUP;
 	b43_hf_write(dev, hf);
 
+	/* tell the ucode MAC capabilities */
+	if (dev->dev->core_rev >= 13) {
+		u32 mac_hw_cap = b43_read32(dev, B43_MMIO_MAC_HW_CAP);
+
+		b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_MACHW_L,
+				mac_hw_cap & 0xffff);
+		b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_MACHW_H,
+				(mac_hw_cap >> 16) & 0xffff);
+	}
+
 	b43_set_retry_limits(dev, B43_DEFAULT_SHORT_RETRY_LIMIT,
 			     B43_DEFAULT_LONG_RETRY_LIMIT);
 	b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_SFFBLIM, 3);
@@ -4834,6 +4947,10 @@ static int b43_wireless_core_init(struct b43_wldev *dev)
 		b43_shm_write16(dev, B43_SHM_SCRATCH, B43_SHM_SC_MINCONT, 0xF);
 	/* Maximum Contention Window */
 	b43_shm_write16(dev, B43_SHM_SCRATCH, B43_SHM_SC_MAXCONT, 0x3FF);
+
+	/* write phytype and phyvers */
+	b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_PHYTYPE, phy->type);
+	b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_PHYVER, phy->rev);
 
 	if (b43_bus_host_is_pcmcia(dev->dev) ||
 	    b43_bus_host_is_sdio(dev->dev)) {
@@ -4934,7 +5051,7 @@ static void b43_op_remove_interface(struct ieee80211_hw *hw,
 	wl->operating = false;
 
 	b43_adjust_opmode(dev);
-	memset(wl->mac_addr, 0, ETH_ALEN);
+	eth_zero_addr(wl->mac_addr);
 	b43_upload_card_macaddress(dev);
 
 	mutex_unlock(&wl->mutex);
@@ -4950,8 +5067,8 @@ static int b43_op_start(struct ieee80211_hw *hw)
 	/* Kill all old instance specific information to make sure
 	 * the card won't use it in the short timeframe between start
 	 * and mac80211 reconfiguring it. */
-	memset(wl->bssid, 0, ETH_ALEN);
-	memset(wl->mac_addr, 0, ETH_ALEN);
+	eth_zero_addr(wl->bssid);
+	eth_zero_addr(wl->mac_addr);
 	wl->filter_flags = 0;
 	wl->radiotap_enabled = false;
 	b43_qos_clear(wl);
@@ -5026,7 +5143,6 @@ static int b43_op_beacon_set_tim(struct ieee80211_hw *hw,
 {
 	struct b43_wl *wl = hw_to_b43_wl(hw);
 
-	/* FIXME: add locking */
 	b43_update_templates(wl);
 
 	return 0;
@@ -5042,7 +5158,9 @@ static void b43_op_sta_notify(struct ieee80211_hw *hw,
 	B43_WARN_ON(!vif || wl->vif != vif);
 }
 
-static void b43_op_sw_scan_start_notifier(struct ieee80211_hw *hw)
+static void b43_op_sw_scan_start_notifier(struct ieee80211_hw *hw,
+					  struct ieee80211_vif *vif,
+					  const u8 *mac_addr)
 {
 	struct b43_wl *wl = hw_to_b43_wl(hw);
 	struct b43_wldev *dev;
@@ -5056,7 +5174,8 @@ static void b43_op_sw_scan_start_notifier(struct ieee80211_hw *hw)
 	mutex_unlock(&wl->mutex);
 }
 
-static void b43_op_sw_scan_complete_notifier(struct ieee80211_hw *hw)
+static void b43_op_sw_scan_complete_notifier(struct ieee80211_hw *hw,
+					     struct ieee80211_vif *vif)
 {
 	struct b43_wl *wl = hw_to_b43_wl(hw);
 	struct b43_wldev *dev;
@@ -5251,6 +5370,7 @@ static void b43_supported_bands(struct b43_wldev *dev, bool *have_2ghz_phy,
 	case 0x432a: /* BCM4321 */
 	case 0x432d: /* BCM4322 */
 	case 0x4352: /* BCM43222 */
+	case 0x435a: /* BCM43228 */
 	case 0x4333: /* BCM4331 */
 	case 0x43a2: /* BCM4360 */
 	case 0x43b3: /* BCM4352 */
@@ -5513,6 +5633,7 @@ static struct b43_wl *b43_wireless_init(struct b43_bus_dev *dev)
 	wl->hw = hw;
 	mutex_init(&wl->mutex);
 	spin_lock_init(&wl->hardirq_lock);
+	spin_lock_init(&wl->beacon_lock);
 	INIT_WORK(&wl->beacon_update_trigger, b43_beacon_update_trigger_work);
 	INIT_WORK(&wl->txpower_adjust_work, b43_phy_txpower_adjust_work);
 	INIT_WORK(&wl->tx_work, b43_tx_work);

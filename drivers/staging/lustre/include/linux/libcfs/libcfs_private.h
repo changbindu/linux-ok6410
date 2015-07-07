@@ -335,8 +335,8 @@ do {							    \
 #define LASSERT_ATOMIC_ZERO(a)		  LASSERT_ATOMIC_EQ(a, 0)
 #define LASSERT_ATOMIC_POS(a)		   LASSERT_ATOMIC_GT(a, 0)
 
-#define CFS_ALLOC_PTR(ptr)      LIBCFS_ALLOC(ptr, sizeof(*(ptr)));
-#define CFS_FREE_PTR(ptr)       LIBCFS_FREE(ptr, sizeof(*(ptr)));
+#define CFS_ALLOC_PTR(ptr)      LIBCFS_ALLOC(ptr, sizeof(*(ptr)))
+#define CFS_FREE_PTR(ptr)       LIBCFS_FREE(ptr, sizeof(*(ptr)))
 
 /*
  * percpu partition lock
@@ -453,19 +453,10 @@ int	 cfs_match_nid(lnet_nid_t nid, struct list_head *list);
  * Support for temporary event tracing with minimal Heisenberg effect.
  * -------------------------------------------------------------------- */
 
-struct libcfs_device_userstate
-{
+struct libcfs_device_userstate {
 	int	   ldu_memhog_pages;
 	struct page   *ldu_memhog_root_page;
 };
-
-/* what used to be in portals_lib.h */
-#ifndef MIN
-# define MIN(a, b) (((a) < (b)) ? (a) : (b))
-#endif
-#ifndef MAX
-# define MAX(a, b) (((a) > (b)) ? (a) : (b))
-#endif
 
 #define MKSTR(ptr) ((ptr)) ? (ptr) : ""
 

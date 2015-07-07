@@ -315,22 +315,19 @@ static int mwifiex_dnld_sleep_confirm_cmd(struct mwifiex_adapter *adapter)
 		adapter->dbg.num_cmd_sleep_cfm_host_to_card_failure++;
 		return -1;
 	}
-	if (GET_BSS_ROLE(mwifiex_get_priv(adapter, MWIFIEX_BSS_ROLE_ANY))
-	    == MWIFIEX_BSS_ROLE_STA) {
-		if (!le16_to_cpu(sleep_cfm_buf->resp_ctrl))
-			/* Response is not needed for sleep
-			   confirm command */
-			adapter->ps_state = PS_STATE_SLEEP;
-		else
-			adapter->ps_state = PS_STATE_SLEEP_CFM;
 
-		if (!le16_to_cpu(sleep_cfm_buf->resp_ctrl) &&
-		    (adapter->is_hs_configured &&
-		     !adapter->sleep_period.period)) {
-			adapter->pm_wakeup_card_req = true;
-			mwifiex_hs_activated_event(mwifiex_get_priv
-					(adapter, MWIFIEX_BSS_ROLE_STA), true);
-		}
+	if (!le16_to_cpu(sleep_cfm_buf->resp_ctrl))
+		/* Response is not needed for sleep confirm command */
+		adapter->ps_state = PS_STATE_SLEEP;
+	else
+		adapter->ps_state = PS_STATE_SLEEP_CFM;
+
+	if (!le16_to_cpu(sleep_cfm_buf->resp_ctrl) &&
+	    (adapter->is_hs_configured &&
+	     !adapter->sleep_period.period)) {
+		adapter->pm_wakeup_card_req = true;
+		mwifiex_hs_activated_event(mwifiex_get_priv
+				(adapter, MWIFIEX_BSS_ROLE_ANY), true);
 	}
 
 	return ret;
@@ -450,6 +447,7 @@ int mwifiex_process_event(struct mwifiex_adapter *adapter)
 				      EVENT_GET_BSS_TYPE(eventcause));
 	if (!priv)
 		priv = mwifiex_get_priv(adapter, MWIFIEX_BSS_ROLE_ANY);
+
 	/* Clear BSS_NO_BITS from event */
 	eventcause &= EVENT_ID_MASK;
 	adapter->event_cause = eventcause;
@@ -462,12 +460,6 @@ int mwifiex_process_event(struct mwifiex_adapter *adapter)
 	}
 
 	dev_dbg(adapter->dev, "EVENT: cause: %#x\n", eventcause);
-	if (eventcause == EVENT_PS_SLEEP || eventcause == EVENT_PS_AWAKE) {
-		/* Handle PS_SLEEP/AWAKE events on STA */
-		priv = mwifiex_get_priv(adapter, MWIFIEX_BSS_ROLE_STA);
-		if (!priv)
-			priv = mwifiex_get_priv(adapter, MWIFIEX_BSS_ROLE_ANY);
-	}
 
 	if (priv->bss_role == MWIFIEX_BSS_ROLE_UAP)
 		ret = mwifiex_process_uap_event(priv);
@@ -1008,11 +1000,9 @@ mwifiex_cancel_all_pending_cmd(struct mwifiex_adapter *adapter)
 	list_for_each_entry_safe(cmd_node, tmp_node,
 				 &adapter->scan_pending_q, list) {
 		list_del(&cmd_node->list);
-		spin_unlock_irqrestore(&adapter->scan_pending_q_lock, flags);
 
 		cmd_node->wait_q_enabled = false;
 		mwifiex_insert_cmd_to_free_q(adapter, cmd_node);
-		spin_lock_irqsave(&adapter->scan_pending_q_lock, flags);
 	}
 	spin_unlock_irqrestore(&adapter->scan_pending_q_lock, flags);
 
@@ -1070,12 +1060,8 @@ mwifiex_cancel_pending_ioctl(struct mwifiex_adapter *adapter)
 	list_for_each_entry_safe(cmd_node, tmp_node,
 				 &adapter->scan_pending_q, list) {
 		list_del(&cmd_node->list);
-		spin_unlock_irqrestore(&adapter->scan_pending_q_lock,
-				       scan_pending_q_flags);
 		cmd_node->wait_q_enabled = false;
 		mwifiex_insert_cmd_to_free_q(adapter, cmd_node);
-		spin_lock_irqsave(&adapter->scan_pending_q_lock,
-				  scan_pending_q_flags);
 	}
 	spin_unlock_irqrestore(&adapter->scan_pending_q_lock,
 			       scan_pending_q_flags);
@@ -1470,7 +1456,7 @@ int mwifiex_ret_get_hw_spec(struct mwifiex_private *priv,
 	struct host_cmd_ds_get_hw_spec *hw_spec = &resp->params.hw_spec;
 	struct mwifiex_adapter *adapter = priv->adapter;
 	struct mwifiex_ie_types_header *tlv;
-	struct hw_spec_fw_api_rev *api_rev;
+	struct hw_spec_api_rev *api_rev;
 	u16 resp_size, api_id;
 	int i, left_len, parsed_len = 0;
 
@@ -1538,23 +1524,30 @@ int mwifiex_ret_get_hw_spec(struct mwifiex_private *priv,
 		while (left_len > sizeof(struct mwifiex_ie_types_header)) {
 			tlv = (void *)&hw_spec->tlvs + parsed_len;
 			switch (le16_to_cpu(tlv->type)) {
-			case TLV_TYPE_FW_API_REV:
-				api_rev = (struct hw_spec_fw_api_rev *)tlv;
+			case TLV_TYPE_API_REV:
+				api_rev = (struct hw_spec_api_rev *)tlv;
 				api_id = le16_to_cpu(api_rev->api_id);
 				switch (api_id) {
 				case KEY_API_VER_ID:
-					adapter->fw_key_api_major_ver =
+					adapter->key_api_major_ver =
 							api_rev->major_ver;
-					adapter->fw_key_api_minor_ver =
+					adapter->key_api_minor_ver =
 							api_rev->minor_ver;
 					dev_dbg(adapter->dev,
-						"fw_key_api v%d.%d\n",
-						adapter->fw_key_api_major_ver,
-						adapter->fw_key_api_minor_ver);
+						"key_api v%d.%d\n",
+						adapter->key_api_major_ver,
+						adapter->key_api_minor_ver);
+					break;
+				case FW_API_VER_ID:
+					adapter->fw_api_ver =
+							api_rev->major_ver;
+					dev_dbg(adapter->dev,
+						"Firmware api version %d\n",
+						adapter->fw_api_ver);
 					break;
 				default:
 					dev_warn(adapter->dev,
-						 "Unknown FW api_id: %d\n",
+						 "Unknown api_id: %d\n",
 						 api_id);
 					break;
 				}
@@ -1567,7 +1560,8 @@ int mwifiex_ret_get_hw_spec(struct mwifiex_private *priv,
 			}
 			parsed_len += le16_to_cpu(tlv->len) +
 				      sizeof(struct mwifiex_ie_types_header);
-			left_len -= parsed_len;
+			left_len -= le16_to_cpu(tlv->len) +
+				      sizeof(struct mwifiex_ie_types_header);
 		}
 	}
 
@@ -1580,9 +1574,7 @@ int mwifiex_ret_get_hw_spec(struct mwifiex_private *priv,
 		le16_to_cpu(hw_spec->hw_if_version),
 		le16_to_cpu(hw_spec->version));
 
-	if (priv->curr_addr[0] == 0xff)
-		memmove(priv->curr_addr, hw_spec->permanent_addr, ETH_ALEN);
-
+	ether_addr_copy(priv->adapter->perm_addr, hw_spec->permanent_addr);
 	adapter->region_code = le16_to_cpu(hw_spec->region_code);
 
 	for (i = 0; i < MWIFIEX_MAX_REGION_CODE; i++)
@@ -1604,6 +1596,9 @@ int mwifiex_ret_get_hw_spec(struct mwifiex_private *priv,
 	if (adapter->if_ops.update_mp_end_port)
 		adapter->if_ops.update_mp_end_port(adapter,
 					le16_to_cpu(hw_spec->mp_end_port));
+
+	if (adapter->fw_api_ver == MWIFIEX_FW_V15)
+		adapter->scan_chan_gap_enabled = true;
 
 	return 0;
 }

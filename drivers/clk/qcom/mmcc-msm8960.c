@@ -33,18 +33,21 @@
 #include "clk-branch.h"
 #include "reset.h"
 
-#define P_PXO	0
-#define P_PLL8	1
-#define P_PLL2	2
-#define P_PLL3	3
-#define P_PLL15	3
+enum {
+	P_PXO,
+	P_PLL8,
+	P_PLL2,
+	P_PLL3,
+	P_PLL15,
+	P_HDMI_PLL,
+};
 
 #define F_MN(f, s, _m, _n) { .freq = f, .src = s, .m = _m, .n = _n }
 
-static u8 mmcc_pxo_pll8_pll2_map[] = {
-	[P_PXO]		= 0,
-	[P_PLL8]	= 2,
-	[P_PLL2]	= 1,
+static const struct parent_map mmcc_pxo_pll8_pll2_map[] = {
+	{ P_PXO, 0 },
+	{ P_PLL8, 2 },
+	{ P_PLL2, 1 }
 };
 
 static const char *mmcc_pxo_pll8_pll2[] = {
@@ -53,11 +56,11 @@ static const char *mmcc_pxo_pll8_pll2[] = {
 	"pll2",
 };
 
-static u8 mmcc_pxo_pll8_pll2_pll3_map[] = {
-	[P_PXO]		= 0,
-	[P_PLL8]	= 2,
-	[P_PLL2]	= 1,
-	[P_PLL3]	= 3,
+static const struct parent_map mmcc_pxo_pll8_pll2_pll3_map[] = {
+	{ P_PXO, 0 },
+	{ P_PLL8, 2 },
+	{ P_PLL2, 1 },
+	{ P_PLL3, 3 }
 };
 
 static const char *mmcc_pxo_pll8_pll2_pll15[] = {
@@ -67,11 +70,11 @@ static const char *mmcc_pxo_pll8_pll2_pll15[] = {
 	"pll15",
 };
 
-static u8 mmcc_pxo_pll8_pll2_pll15_map[] = {
-	[P_PXO]		= 0,
-	[P_PLL8]	= 2,
-	[P_PLL2]	= 1,
-	[P_PLL15]	= 3,
+static const struct parent_map mmcc_pxo_pll8_pll2_pll15_map[] = {
+	{ P_PXO, 0 },
+	{ P_PLL8, 2 },
+	{ P_PLL2, 1 },
+	{ P_PLL15, 3 }
 };
 
 static const char *mmcc_pxo_pll8_pll2_pll3[] = {
@@ -773,9 +776,11 @@ static struct freq_tbl clk_tbl_gfx2d[] = {
 };
 
 static struct clk_dyn_rcg gfx2d0_src = {
-	.ns_reg = 0x0070,
+	.ns_reg[0] = 0x0070,
+	.ns_reg[1] = 0x0070,
 	.md_reg[0] = 0x0064,
 	.md_reg[1] = 0x0068,
+	.bank_reg = 0x0060,
 	.mn[0] = {
 		.mnctr_en_bit = 8,
 		.mnctr_reset_bit = 25,
@@ -831,9 +836,11 @@ static struct clk_branch gfx2d0_clk = {
 };
 
 static struct clk_dyn_rcg gfx2d1_src = {
-	.ns_reg = 0x007c,
+	.ns_reg[0] = 0x007c,
+	.ns_reg[1] = 0x007c,
 	.md_reg[0] = 0x0078,
 	.md_reg[1] = 0x006c,
+	.bank_reg = 0x0074,
 	.mn[0] = {
 		.mnctr_en_bit = 8,
 		.mnctr_reset_bit = 25,
@@ -930,9 +937,11 @@ static struct freq_tbl clk_tbl_gfx3d_8064[] = {
 };
 
 static struct clk_dyn_rcg gfx3d_src = {
-	.ns_reg = 0x008c,
+	.ns_reg[0] = 0x008c,
+	.ns_reg[1] = 0x008c,
 	.md_reg[0] = 0x0084,
 	.md_reg[1] = 0x0088,
+	.bank_reg = 0x0080,
 	.mn[0] = {
 		.mnctr_en_bit = 8,
 		.mnctr_reset_bit = 25,
@@ -1006,9 +1015,11 @@ static struct freq_tbl clk_tbl_vcap[] = {
 };
 
 static struct clk_dyn_rcg vcap_src = {
-	.ns_reg = 0x021c,
+	.ns_reg[0] = 0x021c,
+	.ns_reg[1] = 0x021c,
 	.md_reg[0] = 0x01ec,
 	.md_reg[1] = 0x0218,
+	.bank_reg = 0x0178,
 	.mn[0] = {
 		.mnctr_en_bit = 8,
 		.mnctr_reset_bit = 23,
@@ -1211,9 +1222,11 @@ static struct freq_tbl clk_tbl_mdp[] = {
 };
 
 static struct clk_dyn_rcg mdp_src = {
-	.ns_reg = 0x00d0,
+	.ns_reg[0] = 0x00d0,
+	.ns_reg[1] = 0x00d0,
 	.md_reg[0] = 0x00c4,
 	.md_reg[1] = 0x00c8,
+	.bank_reg = 0x00c0,
 	.mn[0] = {
 		.mnctr_en_bit = 8,
 		.mnctr_reset_bit = 31,
@@ -1318,7 +1331,9 @@ static struct freq_tbl clk_tbl_rot[] = {
 };
 
 static struct clk_dyn_rcg rot_src = {
-	.ns_reg = 0x00e8,
+	.ns_reg[0] = 0x00e8,
+	.ns_reg[1] = 0x00e8,
+	.bank_reg = 0x00e8,
 	.p[0] = {
 		.pre_div_shift = 22,
 		.pre_div_width = 4,
@@ -1365,11 +1380,9 @@ static struct clk_branch rot_clk = {
 	},
 };
 
-#define P_HDMI_PLL 1
-
-static u8 mmcc_pxo_hdmi_map[] = {
-	[P_PXO]		= 0,
-	[P_HDMI_PLL]	= 3,
+static const struct parent_map mmcc_pxo_hdmi_map[] = {
+	{ P_PXO, 0 },
+	{ P_HDMI_PLL, 3 }
 };
 
 static const char *mmcc_pxo_hdmi[] = {
@@ -1542,9 +1555,11 @@ static struct freq_tbl clk_tbl_vcodec[] = {
 };
 
 static struct clk_dyn_rcg vcodec_src = {
-	.ns_reg = 0x0100,
+	.ns_reg[0] = 0x0100,
+	.ns_reg[1] = 0x0100,
 	.md_reg[0] = 0x00fc,
 	.md_reg[1] = 0x0128,
+	.bank_reg = 0x00f8,
 	.mn[0] = {
 		.mnctr_en_bit = 5,
 		.mnctr_reset_bit = 31,
@@ -2679,7 +2694,6 @@ static struct platform_driver mmcc_msm8960_driver = {
 	.remove		= mmcc_msm8960_remove,
 	.driver		= {
 		.name	= "mmcc-msm8960",
-		.owner	= THIS_MODULE,
 		.of_match_table = mmcc_msm8960_match_table,
 	},
 };

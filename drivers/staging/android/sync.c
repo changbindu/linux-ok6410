@@ -114,7 +114,7 @@ void sync_timeline_signal(struct sync_timeline *obj)
 	list_for_each_entry_safe(pt, next, &obj->active_list_head,
 				 active_list) {
 		if (fence_is_signaled_locked(&pt->base))
-			list_del(&pt->active_list);
+			list_del_init(&pt->active_list);
 	}
 
 	spin_unlock_irqrestore(&obj->child_list_lock, flags);
@@ -386,9 +386,9 @@ int sync_fence_wait(struct sync_fence *fence, long timeout)
 					       timeout);
 	trace_sync_wait(fence, 0);
 
-	if (ret < 0)
+	if (ret < 0) {
 		return ret;
-	else if (ret == 0) {
+	} else if (ret == 0) {
 		if (timeout) {
 			pr_info("fence timeout on [%p] after %dms\n", fence,
 				jiffies_to_msecs(timeout));
@@ -704,6 +704,7 @@ static long sync_fence_ioctl(struct file *file, unsigned int cmd,
 			     unsigned long arg)
 {
 	struct sync_fence *fence = file->private_data;
+
 	switch (cmd) {
 	case SYNC_IOC_WAIT:
 		return sync_fence_ioctl_wait(fence, arg);

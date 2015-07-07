@@ -15,8 +15,6 @@
 #include <linux/ctype.h>
 
 static const struct acpi_device_id acpi_pnp_device_ids[] = {
-	/* soc_button_array */
-	{"PNP0C40"},
 	/* pata_isapnp */
 	{"PNP0600"},		/* Generic ESDI/IDE/ATA compatible hard disk controller */
 	/* floppy */
@@ -132,10 +130,6 @@ static const struct acpi_device_id acpi_pnp_device_ids[] = {
 	{"PNP0401"},		/* ECP Printer Port */
 	/* apple-gmux */
 	{"APP000B"},
-	/* fujitsu-laptop.c */
-	{"FUJ02bf"},
-	{"FUJ02B1"},
-	{"FUJ02E3"},
 	/* system */
 	{"PNP0c02"},		/* General ID for reserving resources */
 	{"PNP0c01"},		/* memory controller */
@@ -310,6 +304,8 @@ static const struct acpi_device_id acpi_pnp_device_ids[] = {
 	{"PNPb006"},
 	/* cs423x-pnpbios */
 	{"CSC0100"},
+	{"CSC0103"},
+	{"CSC0110"},
 	{"CSC0000"},
 	{"GIM0100"},		/* Guillemot Turtlebeach something appears to be cs4232 compatible */
 	/* es18xx-pnpbios */

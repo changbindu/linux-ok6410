@@ -97,9 +97,17 @@ void blk_recalc_rq_segments(struct request *rq)
 
 void blk_recount_segments(struct request_queue *q, struct bio *bio)
 {
+	unsigned short seg_cnt;
+
+	/* estimate segment number by bi_vcnt for non-cloned bio */
+	if (bio_flagged(bio, BIO_CLONED))
+		seg_cnt = bio_segments(bio);
+	else
+		seg_cnt = bio->bi_vcnt;
+
 	if (test_bit(QUEUE_FLAG_NO_SG_MERGE, &q->queue_flags) &&
-			bio->bi_vcnt < queue_max_segments(q))
-		bio->bi_phys_segments = bio->bi_vcnt;
+			(seg_cnt < queue_max_segments(q)))
+		bio->bi_phys_segments = seg_cnt;
 	else {
 		struct bio *nxt = bio->bi_next;
 
@@ -275,35 +283,6 @@ int blk_rq_map_sg(struct request_queue *q, struct request *rq,
 }
 EXPORT_SYMBOL(blk_rq_map_sg);
 
-/**
- * blk_bio_map_sg - map a bio to a scatterlist
- * @q: request_queue in question
- * @bio: bio being mapped
- * @sglist: scatterlist being mapped
- *
- * Note:
- *    Caller must make sure sg can hold bio->bi_phys_segments entries
- *
- * Will return the number of sg entries setup
- */
-int blk_bio_map_sg(struct request_queue *q, struct bio *bio,
-		   struct scatterlist *sglist)
-{
-	struct scatterlist *sg = NULL;
-	int nsegs;
-	struct bio *next = bio->bi_next;
-	bio->bi_next = NULL;
-
-	nsegs = __blk_bios_map_sg(q, bio, sglist, &sg);
-	bio->bi_next = next;
-	if (sg)
-		sg_mark_end(sg);
-
-	BUG_ON(bio->bi_phys_segments && nsegs > bio->bi_phys_segments);
-	return nsegs;
-}
-EXPORT_SYMBOL(blk_bio_map_sg);
-
 static inline int ll_new_hw_segment(struct request_queue *q,
 				    struct request *req,
 				    struct bio *bio)
@@ -313,7 +292,7 @@ static inline int ll_new_hw_segment(struct request_queue *q,
 	if (req->nr_phys_segments + nr_phys_segs > queue_max_segments(q))
 		goto no_merge;
 
-	if (bio_integrity(bio) && blk_integrity_merge_bio(q, req, bio))
+	if (blk_integrity_merge_bio(q, req, bio) == false)
 		goto no_merge;
 
 	/*
@@ -377,6 +356,14 @@ static bool req_no_special_merge(struct request *req)
 	return !q->mq_ops && req->special;
 }
 
+static int req_gap_to_prev(struct request *req, struct request *next)
+{
+	struct bio *prev = req->biotail;
+
+	return bvec_gap_to_prev(&prev->bi_io_vec[prev->bi_vcnt - 1],
+				next->bio->bi_io_vec[0].bv_offset);
+}
+
 static int ll_merge_requests_fn(struct request_queue *q, struct request *req,
 				struct request *next)
 {
@@ -389,6 +376,10 @@ static int ll_merge_requests_fn(struct request_queue *q, struct request *req,
 	 * requests.  Can't merge them if they are.
 	 */
 	if (req_no_special_merge(req) || req_no_special_merge(next))
+		return 0;
+
+	if (test_bit(QUEUE_FLAG_SG_GAPS, &q->queue_flags) &&
+	    req_gap_to_prev(req, next))
 		return 0;
 
 	/*
@@ -410,7 +401,7 @@ static int ll_merge_requests_fn(struct request_queue *q, struct request *req,
 	if (total_phys_segments > queue_max_segments(q))
 		return 0;
 
-	if (blk_integrity_rq(req) && blk_integrity_merge_rq(q, req, next))
+	if (blk_integrity_merge_rq(q, req, next) == false)
 		return 0;
 
 	/* Merge is OK... */
@@ -590,7 +581,7 @@ bool blk_rq_merge_ok(struct request *rq, struct bio *bio)
 		return false;
 
 	/* only merge integrity protected bio into ditto rq */
-	if (bio_integrity(bio) != blk_integrity_rq(rq))
+	if (blk_integrity_merge_bio(rq->q, rq, bio) == false)
 		return false;
 
 	/* must be using the same buffer */
@@ -601,7 +592,7 @@ bool blk_rq_merge_ok(struct request *rq, struct bio *bio)
 	if (q->queue_flags & (1 << QUEUE_FLAG_SG_GAPS)) {
 		struct bio_vec *bprev;
 
-		bprev = &rq->biotail->bi_io_vec[bio->bi_vcnt - 1];
+		bprev = &rq->biotail->bi_io_vec[rq->biotail->bi_vcnt - 1];
 		if (bvec_gap_to_prev(bprev, bio->bi_io_vec[0].bv_offset))
 			return false;
 	}

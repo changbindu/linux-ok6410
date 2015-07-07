@@ -40,8 +40,8 @@
 #define MWIFIEX_TXBD_MASK			0x3F
 #define MWIFIEX_RXBD_MASK			0x3F
 
-#define MWIFIEX_MAX_EVT_BD			0x04
-#define MWIFIEX_EVTBD_MASK			0x07
+#define MWIFIEX_MAX_EVT_BD			0x08
+#define MWIFIEX_EVTBD_MASK			0x0f
 
 /* PCIE INTERNAL REGISTERS */
 #define PCIE_SCRATCH_0_REG				0xC10
@@ -69,6 +69,7 @@
 #define CPU_INTR_DOOR_BELL				BIT(1)
 #define CPU_INTR_SLEEP_CFM_DONE			BIT(2)
 #define CPU_INTR_RESET					BIT(3)
+#define CPU_INTR_EVENT_DONE				BIT(5)
 
 #define HOST_INTR_DNLD_DONE				BIT(0)
 #define HOST_INTR_UPLD_RDY				BIT(1)
@@ -204,7 +205,8 @@ struct mwifiex_pcie_device {
 	const struct mwifiex_pcie_card_reg *reg;
 	u16 blksz_fw_dl;
 	u16 tx_buf_size;
-	bool supports_fw_dump;
+	bool can_dump_fw;
+	bool can_ext_scan;
 };
 
 static const struct mwifiex_pcie_device mwifiex_pcie8766 = {
@@ -212,7 +214,8 @@ static const struct mwifiex_pcie_device mwifiex_pcie8766 = {
 	.reg            = &mwifiex_reg_8766,
 	.blksz_fw_dl = MWIFIEX_PCIE_BLOCK_SIZE_FW_DNLD,
 	.tx_buf_size = MWIFIEX_TX_DATA_BUF_SIZE_2K,
-	.supports_fw_dump = false,
+	.can_dump_fw = false,
+	.can_ext_scan = true,
 };
 
 static const struct mwifiex_pcie_device mwifiex_pcie8897 = {
@@ -220,7 +223,8 @@ static const struct mwifiex_pcie_device mwifiex_pcie8897 = {
 	.reg            = &mwifiex_reg_8897,
 	.blksz_fw_dl = MWIFIEX_PCIE_BLOCK_SIZE_FW_DNLD,
 	.tx_buf_size = MWIFIEX_TX_DATA_BUF_SIZE_4K,
-	.supports_fw_dump = true,
+	.can_dump_fw = true,
+	.can_ext_scan = true,
 };
 
 struct mwifiex_evt_buf_desc {

@@ -402,7 +402,7 @@ static int xgene_mii_phy_read(struct xgene_enet_pdata *pdata,
 	return data;
 }
 
-void xgene_gmac_set_mac_addr(struct xgene_enet_pdata *pdata)
+static void xgene_gmac_set_mac_addr(struct xgene_enet_pdata *pdata)
 {
 	u32 addr0, addr1;
 	u8 *dev_addr = pdata->ndev->dev_addr;
@@ -410,7 +410,6 @@ void xgene_gmac_set_mac_addr(struct xgene_enet_pdata *pdata)
 	addr0 = (dev_addr[3] << 24) | (dev_addr[2] << 16) |
 		(dev_addr[1] << 8) | dev_addr[0];
 	addr1 = (dev_addr[5] << 24) | (dev_addr[4] << 16);
-	addr1 |= pdata->phy_addr & 0xFFFF;
 
 	xgene_enet_wr_mcx_mac(pdata, STATION_ADDR0_ADDR, addr0);
 	xgene_enet_wr_mcx_mac(pdata, STATION_ADDR1_ADDR, addr1);
@@ -436,13 +435,13 @@ static int xgene_enet_ecc_init(struct xgene_enet_pdata *pdata)
 	return 0;
 }
 
-void xgene_gmac_reset(struct xgene_enet_pdata *pdata)
+static void xgene_gmac_reset(struct xgene_enet_pdata *pdata)
 {
 	xgene_enet_wr_mcx_mac(pdata, MAC_CONFIG_1_ADDR, SOFT_RESET1);
 	xgene_enet_wr_mcx_mac(pdata, MAC_CONFIG_1_ADDR, 0);
 }
 
-void xgene_gmac_init(struct xgene_enet_pdata *pdata, int speed)
+static void xgene_gmac_init(struct xgene_enet_pdata *pdata)
 {
 	u32 value, mc2;
 	u32 intf_ctl, rgmii;
@@ -456,7 +455,7 @@ void xgene_gmac_init(struct xgene_enet_pdata *pdata, int speed)
 	xgene_enet_rd_mcx_mac(pdata, INTERFACE_CONTROL_ADDR, &intf_ctl);
 	xgene_enet_rd_csr(pdata, RGMII_REG_0_ADDR, &rgmii);
 
-	switch (speed) {
+	switch (pdata->phy_speed) {
 	case SPEED_10:
 		ENET_INTERFACE_MODE2_SET(&mc2, 1);
 		CFG_MACMODE_SET(&icm0, 0);
@@ -525,8 +524,8 @@ static void xgene_enet_config_ring_if_assoc(struct xgene_enet_pdata *pdata)
 	xgene_enet_wr_ring_if(pdata, ENET_CFGSSQMIQMLITEFPQASSOC_ADDR, val);
 }
 
-void xgene_enet_cle_bypass(struct xgene_enet_pdata *pdata,
-			   u32 dst_ring_num, u16 bufpool_id)
+static void xgene_enet_cle_bypass(struct xgene_enet_pdata *pdata,
+				  u32 dst_ring_num, u16 bufpool_id)
 {
 	u32 cb;
 	u32 fpsel;
@@ -544,7 +543,7 @@ void xgene_enet_cle_bypass(struct xgene_enet_pdata *pdata,
 	xgene_enet_wr_csr(pdata, CLE_BYPASS_REG1_0_ADDR, cb);
 }
 
-void xgene_gmac_rx_enable(struct xgene_enet_pdata *pdata)
+static void xgene_gmac_rx_enable(struct xgene_enet_pdata *pdata)
 {
 	u32 data;
 
@@ -552,7 +551,7 @@ void xgene_gmac_rx_enable(struct xgene_enet_pdata *pdata)
 	xgene_enet_wr_mcx_mac(pdata, MAC_CONFIG_1_ADDR, data | RX_EN);
 }
 
-void xgene_gmac_tx_enable(struct xgene_enet_pdata *pdata)
+static void xgene_gmac_tx_enable(struct xgene_enet_pdata *pdata)
 {
 	u32 data;
 
@@ -560,7 +559,7 @@ void xgene_gmac_tx_enable(struct xgene_enet_pdata *pdata)
 	xgene_enet_wr_mcx_mac(pdata, MAC_CONFIG_1_ADDR, data | TX_EN);
 }
 
-void xgene_gmac_rx_disable(struct xgene_enet_pdata *pdata)
+static void xgene_gmac_rx_disable(struct xgene_enet_pdata *pdata)
 {
 	u32 data;
 
@@ -568,7 +567,7 @@ void xgene_gmac_rx_disable(struct xgene_enet_pdata *pdata)
 	xgene_enet_wr_mcx_mac(pdata, MAC_CONFIG_1_ADDR, data & ~RX_EN);
 }
 
-void xgene_gmac_tx_disable(struct xgene_enet_pdata *pdata)
+static void xgene_gmac_tx_disable(struct xgene_enet_pdata *pdata)
 {
 	u32 data;
 
@@ -576,14 +575,30 @@ void xgene_gmac_tx_disable(struct xgene_enet_pdata *pdata)
 	xgene_enet_wr_mcx_mac(pdata, MAC_CONFIG_1_ADDR, data & ~TX_EN);
 }
 
-void xgene_enet_reset(struct xgene_enet_pdata *pdata)
+bool xgene_ring_mgr_init(struct xgene_enet_pdata *p)
+{
+	if (!ioread32(p->ring_csr_addr + CLKEN_ADDR))
+		return false;
+
+	if (ioread32(p->ring_csr_addr + SRST_ADDR))
+		return false;
+
+	return true;
+}
+
+static int xgene_enet_reset(struct xgene_enet_pdata *pdata)
 {
 	u32 val;
 
-	clk_prepare_enable(pdata->clk);
-	clk_disable_unprepare(pdata->clk);
-	clk_prepare_enable(pdata->clk);
-	xgene_enet_ecc_init(pdata);
+	if (!xgene_ring_mgr_init(pdata))
+		return -ENODEV;
+
+	if (pdata->clk) {
+		clk_prepare_enable(pdata->clk);
+		clk_disable_unprepare(pdata->clk);
+		clk_prepare_enable(pdata->clk);
+		xgene_enet_ecc_init(pdata);
+	}
 	xgene_enet_config_ring_if_assoc(pdata);
 
 	/* Enable auto-incr for scanning */
@@ -591,9 +606,11 @@ void xgene_enet_reset(struct xgene_enet_pdata *pdata)
 	val |= SCAN_AUTO_INCR;
 	MGMT_CLOCK_SEL_SET(&val, 1);
 	xgene_enet_wr_mcx_mac(pdata, MII_MGMT_CONFIG_ADDR, val);
+
+	return 0;
 }
 
-void xgene_gport_shutdown(struct xgene_enet_pdata *pdata)
+static void xgene_gport_shutdown(struct xgene_enet_pdata *pdata)
 {
 	clk_disable_unprepare(pdata->clk);
 }
@@ -627,10 +644,10 @@ static void xgene_enet_adjust_link(struct net_device *ndev)
 
 	if (phydev->link) {
 		if (pdata->phy_speed != phydev->speed) {
-			xgene_gmac_init(pdata, phydev->speed);
+			pdata->phy_speed = phydev->speed;
+			xgene_gmac_init(pdata);
 			xgene_gmac_rx_enable(pdata);
 			xgene_gmac_tx_enable(pdata);
-			pdata->phy_speed = phydev->speed;
 			phy_print_status(phydev);
 		}
 	} else {
@@ -648,15 +665,20 @@ static int xgene_enet_phy_connect(struct net_device *ndev)
 	struct phy_device *phy_dev;
 	struct device *dev = &pdata->pdev->dev;
 
-	phy_np = of_parse_phandle(dev->of_node, "phy-handle", 0);
-	if (!phy_np) {
-		netdev_dbg(ndev, "No phy-handle found\n");
-		return -ENODEV;
+	if (dev->of_node) {
+		phy_np = of_parse_phandle(dev->of_node, "phy-handle", 0);
+		if (!phy_np) {
+			netdev_dbg(ndev, "No phy-handle found in DT\n");
+			return -ENODEV;
+		}
+		pdata->phy_dev = of_phy_find_device(phy_np);
 	}
 
-	phy_dev = of_phy_connect(ndev, phy_np, &xgene_enet_adjust_link,
-				 0, pdata->phy_mode);
-	if (!phy_dev) {
+	phy_dev = pdata->phy_dev;
+
+	if (!phy_dev ||
+	    phy_connect_direct(ndev, phy_dev, &xgene_enet_adjust_link,
+			       pdata->phy_mode)) {
 		netdev_err(ndev, "Could not connect to PHY\n");
 		return  -ENODEV;
 	}
@@ -666,31 +688,70 @@ static int xgene_enet_phy_connect(struct net_device *ndev)
 			      ~SUPPORTED_100baseT_Half &
 			      ~SUPPORTED_1000baseT_Half;
 	phy_dev->advertising = phy_dev->supported;
-	pdata->phy_dev = phy_dev;
 
 	return 0;
+}
+
+static int xgene_mdiobus_register(struct xgene_enet_pdata *pdata,
+				  struct mii_bus *mdio)
+{
+	struct device *dev = &pdata->pdev->dev;
+	struct net_device *ndev = pdata->ndev;
+	struct phy_device *phy;
+	struct device_node *child_np;
+	struct device_node *mdio_np = NULL;
+	int ret;
+	u32 phy_id;
+
+	if (dev->of_node) {
+		for_each_child_of_node(dev->of_node, child_np) {
+			if (of_device_is_compatible(child_np,
+						    "apm,xgene-mdio")) {
+				mdio_np = child_np;
+				break;
+			}
+		}
+
+		if (!mdio_np) {
+			netdev_dbg(ndev, "No mdio node in the dts\n");
+			return -ENXIO;
+		}
+
+		return of_mdiobus_register(mdio, mdio_np);
+	}
+
+	/* Mask out all PHYs from auto probing. */
+	mdio->phy_mask = ~0;
+
+	/* Register the MDIO bus */
+	ret = mdiobus_register(mdio);
+	if (ret)
+		return ret;
+
+	ret = device_property_read_u32(dev, "phy-channel", &phy_id);
+	if (ret)
+		ret = device_property_read_u32(dev, "phy-addr", &phy_id);
+	if (ret)
+		return -EINVAL;
+
+	phy = get_phy_device(mdio, phy_id, true);
+	if (!phy || IS_ERR(phy))
+		return -EIO;
+
+	ret = phy_device_register(phy);
+	if (ret)
+		phy_device_free(phy);
+	else
+		pdata->phy_dev = phy;
+
+	return ret;
 }
 
 int xgene_enet_mdio_config(struct xgene_enet_pdata *pdata)
 {
 	struct net_device *ndev = pdata->ndev;
-	struct device *dev = &pdata->pdev->dev;
-	struct device_node *child_np;
-	struct device_node *mdio_np = NULL;
 	struct mii_bus *mdio_bus;
 	int ret;
-
-	for_each_child_of_node(dev->of_node, child_np) {
-		if (of_device_is_compatible(child_np, "apm,xgene-mdio")) {
-			mdio_np = child_np;
-			break;
-		}
-	}
-
-	if (!mdio_np) {
-		netdev_dbg(ndev, "No mdio node in the dts\n");
-		return -ENXIO;
-	}
 
 	mdio_bus = mdiobus_alloc();
 	if (!mdio_bus)
@@ -705,7 +766,7 @@ int xgene_enet_mdio_config(struct xgene_enet_pdata *pdata)
 	mdio_bus->priv = pdata;
 	mdio_bus->parent = &ndev->dev;
 
-	ret = of_mdiobus_register(mdio_bus, mdio_np);
+	ret = xgene_mdiobus_register(pdata, mdio_bus);
 	if (ret) {
 		netdev_err(ndev, "Failed to register MDIO bus\n");
 		mdiobus_free(mdio_bus);
@@ -726,3 +787,19 @@ void xgene_enet_mdio_remove(struct xgene_enet_pdata *pdata)
 	mdiobus_free(pdata->mdio_bus);
 	pdata->mdio_bus = NULL;
 }
+
+struct xgene_mac_ops xgene_gmac_ops = {
+	.init = xgene_gmac_init,
+	.reset = xgene_gmac_reset,
+	.rx_enable = xgene_gmac_rx_enable,
+	.tx_enable = xgene_gmac_tx_enable,
+	.rx_disable = xgene_gmac_rx_disable,
+	.tx_disable = xgene_gmac_tx_disable,
+	.set_mac_addr = xgene_gmac_set_mac_addr,
+};
+
+struct xgene_port_ops xgene_gport_ops = {
+	.reset = xgene_enet_reset,
+	.cle_bypass = xgene_enet_cle_bypass,
+	.shutdown = xgene_gport_shutdown,
+};

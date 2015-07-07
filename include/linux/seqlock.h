@@ -108,7 +108,7 @@ static inline unsigned __read_seqcount_begin(const seqcount_t *s)
 	unsigned ret;
 
 repeat:
-	ret = ACCESS_ONCE(s->sequence);
+	ret = READ_ONCE(s->sequence);
 	if (unlikely(ret & 1)) {
 		cpu_relax();
 		goto repeat;
@@ -127,7 +127,7 @@ repeat:
  */
 static inline unsigned raw_read_seqcount(const seqcount_t *s)
 {
-	unsigned ret = ACCESS_ONCE(s->sequence);
+	unsigned ret = READ_ONCE(s->sequence);
 	smp_rmb();
 	return ret;
 }
@@ -179,7 +179,7 @@ static inline unsigned read_seqcount_begin(const seqcount_t *s)
  */
 static inline unsigned raw_seqcount_begin(const seqcount_t *s)
 {
-	unsigned ret = ACCESS_ONCE(s->sequence);
+	unsigned ret = READ_ONCE(s->sequence);
 	smp_rmb();
 	return ret & ~1;
 }
@@ -456,4 +456,23 @@ read_sequnlock_excl_irqrestore(seqlock_t *sl, unsigned long flags)
 	spin_unlock_irqrestore(&sl->lock, flags);
 }
 
+static inline unsigned long
+read_seqbegin_or_lock_irqsave(seqlock_t *lock, int *seq)
+{
+	unsigned long flags = 0;
+
+	if (!(*seq & 1))	/* Even */
+		*seq = read_seqbegin(lock);
+	else			/* Odd */
+		read_seqlock_excl_irqsave(lock, flags);
+
+	return flags;
+}
+
+static inline void
+done_seqretry_irqrestore(seqlock_t *lock, int seq, unsigned long flags)
+{
+	if (seq & 1)
+		read_sequnlock_excl_irqrestore(lock, flags);
+}
 #endif /* __LINUX_SEQLOCK_H */

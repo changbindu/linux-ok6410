@@ -19,12 +19,13 @@
 #include <linux/etherdevice.h>
 #include <brcmu_utils.h>
 
-#include "dhd.h"
-#include "dhd_dbg.h"
-#include "dhd_bus.h"
+#include "core.h"
+#include "debug.h"
+#include "bus.h"
 #include "proto.h"
 #include "flowring.h"
 #include "msgbuf.h"
+#include "common.h"
 
 
 #define BRCMF_FLOWRING_HIGH		1024
@@ -33,9 +34,6 @@
 
 #define BRCMF_FLOWRING_HASH_AP(da, fifo, ifidx) (da[5] + fifo + ifidx * 16)
 #define BRCMF_FLOWRING_HASH_STA(fifo, ifidx) (fifo + ifidx * 16)
-
-static const u8 ALLZEROMAC[ETH_ALEN] = { 0, 0, 0, 0, 0, 0 };
-static const u8 ALLFFMAC[ETH_ALEN] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
 
 static const u8 brcmf_flowring_prio2fifo[] = {
 	1,
@@ -137,7 +135,7 @@ u32 brcmf_flowring_create(struct brcmf_flowring *flow, u8 da[ETH_ALEN],
 	hash = flow->hash;
 	for (i = 0; i < BRCMF_FLOWRING_HASHSIZE; i++) {
 		if ((hash[hash_idx].ifidx == BRCMF_FLOWRING_INVALID_IFIDX) &&
-		    (memcmp(hash[hash_idx].mac, ALLZEROMAC, ETH_ALEN) == 0)) {
+		    (is_zero_ether_addr(hash[hash_idx].mac))) {
 			found = true;
 			break;
 		}
@@ -238,7 +236,7 @@ void brcmf_flowring_delete(struct brcmf_flowring *flow, u8 flowid)
 	brcmf_flowring_block(flow, flowid, false);
 	hash_idx = ring->hash_id;
 	flow->hash[hash_idx].ifidx = BRCMF_FLOWRING_INVALID_IFIDX;
-	memset(flow->hash[hash_idx].mac, 0, ETH_ALEN);
+	eth_zero_addr(flow->hash[hash_idx].mac);
 	flow->rings[flowid] = NULL;
 
 	skb = skb_dequeue(&ring->skblist);
@@ -354,7 +352,7 @@ struct brcmf_flowring *brcmf_flowring_attach(struct device *dev, u16 nrofrings)
 	struct brcmf_flowring *flow;
 	u32 i;
 
-	flow = kzalloc(sizeof(*flow), GFP_ATOMIC);
+	flow = kzalloc(sizeof(*flow), GFP_KERNEL);
 	if (flow) {
 		flow->dev = dev;
 		flow->nrofrings = nrofrings;
@@ -364,7 +362,7 @@ struct brcmf_flowring *brcmf_flowring_attach(struct device *dev, u16 nrofrings)
 		for (i = 0; i < ARRAY_SIZE(flow->hash); i++)
 			flow->hash[i].ifidx = BRCMF_FLOWRING_INVALID_IFIDX;
 		flow->rings = kcalloc(nrofrings, sizeof(*flow->rings),
-				      GFP_ATOMIC);
+				      GFP_KERNEL);
 		if (!flow->rings) {
 			kfree(flow);
 			flow = NULL;

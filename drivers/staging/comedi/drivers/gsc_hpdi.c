@@ -41,14 +41,12 @@
  */
 
 #include <linux/module.h>
-#include <linux/pci.h>
 #include <linux/delay.h>
 #include <linux/interrupt.h>
 
-#include "../comedidev.h"
+#include "../comedi_pci.h"
 
 #include "plx9080.h"
-#include "comedi_fc.h"
 
 /*
  * PCI BAR2 Register map (dev->mmio)
@@ -196,8 +194,8 @@ static void gsc_hpdi_drain_dma(struct comedi_device *dev, unsigned int channel)
 				size = devpriv->dio_count;
 			devpriv->dio_count -= size;
 		}
-		cfc_write_array_to_buffer(s, devpriv->desc_dio_buffer[idx],
-					  size * sizeof(uint32_t));
+		comedi_buf_write_samples(s, devpriv->desc_dio_buffer[idx],
+					 size);
 		idx++;
 		idx %= devpriv->num_dma_descriptors;
 		start = le32_to_cpu(devpriv->dma_desc[idx].pci_start_addr);
@@ -261,18 +259,18 @@ static irqreturn_t gsc_hpdi_interrupt(int irq, void *d)
 
 	if (hpdi_board_status & RX_OVERRUN_BIT) {
 		dev_err(dev->class_dev, "rx fifo overrun\n");
-		async->events |= COMEDI_CB_EOA | COMEDI_CB_ERROR;
+		async->events |= COMEDI_CB_ERROR;
 	}
 
 	if (hpdi_board_status & RX_UNDERRUN_BIT) {
 		dev_err(dev->class_dev, "rx fifo underrun\n");
-		async->events |= COMEDI_CB_EOA | COMEDI_CB_ERROR;
+		async->events |= COMEDI_CB_ERROR;
 	}
 
 	if (devpriv->dio_count == 0)
 		async->events |= COMEDI_CB_EOA;
 
-	cfc_handle_events(dev, s);
+	comedi_handle_events(dev, s);
 
 	return IRQ_HANDLED;
 }
@@ -386,18 +384,18 @@ static int gsc_hpdi_cmd_test(struct comedi_device *dev,
 
 	/* Step 1 : check if triggers are trivially valid */
 
-	err |= cfc_check_trigger_src(&cmd->start_src, TRIG_NOW);
-	err |= cfc_check_trigger_src(&cmd->scan_begin_src, TRIG_EXT);
-	err |= cfc_check_trigger_src(&cmd->convert_src, TRIG_NOW);
-	err |= cfc_check_trigger_src(&cmd->scan_end_src, TRIG_COUNT);
-	err |= cfc_check_trigger_src(&cmd->stop_src, TRIG_COUNT | TRIG_NONE);
+	err |= comedi_check_trigger_src(&cmd->start_src, TRIG_NOW);
+	err |= comedi_check_trigger_src(&cmd->scan_begin_src, TRIG_EXT);
+	err |= comedi_check_trigger_src(&cmd->convert_src, TRIG_NOW);
+	err |= comedi_check_trigger_src(&cmd->scan_end_src, TRIG_COUNT);
+	err |= comedi_check_trigger_src(&cmd->stop_src, TRIG_COUNT | TRIG_NONE);
 
 	if (err)
 		return 1;
 
 	/* Step 2a : make sure trigger sources are unique */
 
-	err |= cfc_check_trigger_is_unique(cmd->stop_src);
+	err |= comedi_check_trigger_is_unique(cmd->stop_src);
 
 	/* Step 2b : and mutually compatible */
 
@@ -406,28 +404,27 @@ static int gsc_hpdi_cmd_test(struct comedi_device *dev,
 
 	/* Step 3: check if arguments are trivially valid */
 
-	err |= cfc_check_trigger_arg_is(&cmd->start_arg, 0);
+	err |= comedi_check_trigger_arg_is(&cmd->start_arg, 0);
 
 	if (!cmd->chanlist_len || !cmd->chanlist) {
 		cmd->chanlist_len = 32;
 		err |= -EINVAL;
 	}
-	err |= cfc_check_trigger_arg_is(&cmd->scan_end_arg, cmd->chanlist_len);
+	err |= comedi_check_trigger_arg_is(&cmd->scan_end_arg,
+					   cmd->chanlist_len);
 
 	if (cmd->stop_src == TRIG_COUNT)
-		err |= cfc_check_trigger_arg_min(&cmd->stop_arg, 1);
+		err |= comedi_check_trigger_arg_min(&cmd->stop_arg, 1);
 	else	/* TRIG_NONE */
-		err |= cfc_check_trigger_arg_is(&cmd->stop_arg, 0);
+		err |= comedi_check_trigger_arg_is(&cmd->stop_arg, 0);
 
 	if (err)
 		return 3;
 
-	/* step 4: fix up any arguments */
-
-	if (err)
-		return 4;
+	/* Step 4: fix up any arguments */
 
 	/* Step 5: check channel list if it exists */
+
 	if (cmd->chanlist && cmd->chanlist_len > 0)
 		err |= gsc_hpdi_check_chanlist(dev, s, cmd);
 
@@ -435,7 +432,6 @@ static int gsc_hpdi_cmd_test(struct comedi_device *dev,
 		return 5;
 
 	return 0;
-
 }
 
 /* setup dma descriptors so a link completes every 'len' bytes */
@@ -505,6 +501,32 @@ static int gsc_hpdi_dio_insn_config(struct comedi_device *dev,
 	}
 
 	return insn->n;
+}
+
+static void gsc_hpdi_free_dma(struct comedi_device *dev)
+{
+	struct pci_dev *pcidev = comedi_to_pci_dev(dev);
+	struct hpdi_private *devpriv = dev->private;
+	int i;
+
+	if (!devpriv)
+		return;
+
+	/* free pci dma buffers */
+	for (i = 0; i < NUM_DMA_BUFFERS; i++) {
+		if (devpriv->dio_buffer[i])
+			pci_free_consistent(pcidev,
+					    DMA_BUFFER_SIZE,
+					    devpriv->dio_buffer[i],
+					    devpriv->dio_buffer_phys_addr[i]);
+	}
+	/* free dma descriptors */
+	if (devpriv->dma_desc)
+		pci_free_consistent(pcidev,
+				    sizeof(struct plx_dma_desc) *
+				    NUM_DMA_DESCRIPTORS,
+				    devpriv->dma_desc,
+				    devpriv->dma_desc_phys_addr);
 }
 
 static int gsc_hpdi_init(struct comedi_device *dev)
@@ -665,7 +687,7 @@ static int gsc_hpdi_auto_attach(struct comedi_device *dev,
 	s = &dev->subdevices[0];
 	dev->read_subdev = s;
 	s->type		= COMEDI_SUBD_DIO;
-	s->subdev_flags	= SDF_READABLE | SDF_WRITEABLE | SDF_LSAMPL |
+	s->subdev_flags	= SDF_READABLE | SDF_WRITABLE | SDF_LSAMPL |
 			  SDF_CMD_READ;
 	s->n_chan	= 32;
 	s->len_chanlist	= 32;
@@ -681,9 +703,7 @@ static int gsc_hpdi_auto_attach(struct comedi_device *dev,
 
 static void gsc_hpdi_detach(struct comedi_device *dev)
 {
-	struct pci_dev *pcidev = comedi_to_pci_dev(dev);
 	struct hpdi_private *devpriv = dev->private;
-	unsigned int i;
 
 	if (dev->irq)
 		free_irq(dev->irq, dev);
@@ -694,24 +714,9 @@ static void gsc_hpdi_detach(struct comedi_device *dev)
 		}
 		if (dev->mmio)
 			iounmap(dev->mmio);
-		/*  free pci dma buffers */
-		for (i = 0; i < NUM_DMA_BUFFERS; i++) {
-			if (devpriv->dio_buffer[i])
-				pci_free_consistent(pcidev,
-						    DMA_BUFFER_SIZE,
-						    devpriv->dio_buffer[i],
-						    devpriv->
-						    dio_buffer_phys_addr[i]);
-		}
-		/*  free dma descriptors */
-		if (devpriv->dma_desc)
-			pci_free_consistent(pcidev,
-					    sizeof(struct plx_dma_desc) *
-					    NUM_DMA_DESCRIPTORS,
-					    devpriv->dma_desc,
-					    devpriv->dma_desc_phys_addr);
 	}
 	comedi_pci_disable(dev);
+	gsc_hpdi_free_dma(dev);
 }
 
 static struct comedi_driver gsc_hpdi_driver = {

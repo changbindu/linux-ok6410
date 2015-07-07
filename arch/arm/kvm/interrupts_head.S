@@ -402,7 +402,6 @@ vcpu	.req	r0		@ vcpu pointer always in r0
  * Assumes vcpu pointer in vcpu reg
  */
 .macro save_vgic_state
-#ifdef CONFIG_KVM_ARM_VGIC
 	/* Get VGIC VCTRL base into r2 */
 	ldr	r2, [vcpu, #VCPU_KVM]
 	ldr	r2, [r2, #KVM_VGIC_VCTRL]
@@ -433,10 +432,17 @@ ARM_BE8(rev	r10, r10	)
 	str	r3, [r11, #VGIC_V2_CPU_HCR]
 	str	r4, [r11, #VGIC_V2_CPU_VMCR]
 	str	r5, [r11, #VGIC_V2_CPU_MISR]
+#ifdef CONFIG_CPU_ENDIAN_BE8
+	str	r6, [r11, #(VGIC_V2_CPU_EISR + 4)]
+	str	r7, [r11, #VGIC_V2_CPU_EISR]
+	str	r8, [r11, #(VGIC_V2_CPU_ELRSR + 4)]
+	str	r9, [r11, #VGIC_V2_CPU_ELRSR]
+#else
 	str	r6, [r11, #VGIC_V2_CPU_EISR]
 	str	r7, [r11, #(VGIC_V2_CPU_EISR + 4)]
 	str	r8, [r11, #VGIC_V2_CPU_ELRSR]
 	str	r9, [r11, #(VGIC_V2_CPU_ELRSR + 4)]
+#endif
 	str	r10, [r11, #VGIC_V2_CPU_APR]
 
 	/* Clear GICH_HCR */
@@ -453,7 +459,6 @@ ARM_BE8(rev	r6, r6	)
 	subs	r4, r4, #1
 	bne	1b
 2:
-#endif
 .endm
 
 /*
@@ -462,7 +467,6 @@ ARM_BE8(rev	r6, r6	)
  * Assumes vcpu pointer in vcpu reg
  */
 .macro restore_vgic_state
-#ifdef CONFIG_KVM_ARM_VGIC
 	/* Get VGIC VCTRL base into r2 */
 	ldr	r2, [vcpu, #VCPU_KVM]
 	ldr	r2, [r2, #KVM_VGIC_VCTRL]
@@ -494,7 +498,6 @@ ARM_BE8(rev	r6, r6  )
 	subs	r4, r4, #1
 	bne	1b
 2:
-#endif
 .endm
 
 #define CNTHCTL_PL1PCTEN	(1 << 0)
@@ -508,7 +511,6 @@ ARM_BE8(rev	r6, r6  )
  * Clobbers r2-r5
  */
 .macro save_timer_state
-#ifdef CONFIG_KVM_ARM_TIMER
 	ldr	r4, [vcpu, #VCPU_KVM]
 	ldr	r2, [r4, #KVM_TIMER_ENABLED]
 	cmp	r2, #0
@@ -530,7 +532,6 @@ ARM_BE8(rev	r6, r6  )
 	mcrr	p15, 4, r2, r2, c14	@ CNTVOFF
 
 1:
-#endif
 	@ Allow physical timer/counter access for the host
 	mrc	p15, 4, r2, c14, c1, 0	@ CNTHCTL
 	orr	r2, r2, #(CNTHCTL_PL1PCEN | CNTHCTL_PL1PCTEN)
@@ -552,7 +553,6 @@ ARM_BE8(rev	r6, r6  )
 	bic	r2, r2, #CNTHCTL_PL1PCEN
 	mcr	p15, 4, r2, c14, c1, 0	@ CNTHCTL
 
-#ifdef CONFIG_KVM_ARM_TIMER
 	ldr	r4, [vcpu, #VCPU_KVM]
 	ldr	r2, [r4, #KVM_TIMER_ENABLED]
 	cmp	r2, #0
@@ -572,7 +572,6 @@ ARM_BE8(rev	r6, r6  )
 	and	r2, r2, #3
 	mcr	p15, 0, r2, c14, c3, 1	@ CNTV_CTL
 1:
-#endif
 .endm
 
 .equ vmentry,	0

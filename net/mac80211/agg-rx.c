@@ -49,8 +49,6 @@ static void ieee80211_free_tid_rx(struct rcu_head *h)
 		container_of(h, struct tid_ampdu_rx, rcu_head);
 	int i;
 
-	del_timer_sync(&tid_rx->reorder_timer);
-
 	for (i = 0; i < tid_rx->buf_size; i++)
 		__skb_queue_purge(&tid_rx->reorder_buf[i]);
 	kfree(tid_rx->reorder_buf);
@@ -92,6 +90,12 @@ void ___ieee80211_stop_rx_ba_session(struct sta_info *sta, u16 tid,
 				     tid, WLAN_BACK_RECIPIENT, reason);
 
 	del_timer_sync(&tid_rx->session_timer);
+
+	/* make sure ieee80211_sta_reorder_release() doesn't re-arm the timer */
+	spin_lock_bh(&tid_rx->reorder_lock);
+	tid_rx->removed = true;
+	spin_unlock_bh(&tid_rx->reorder_lock);
+	del_timer_sync(&tid_rx->reorder_timer);
 
 	call_rcu(&tid_rx->rcu_head, ieee80211_free_tid_rx);
 }
@@ -227,12 +231,20 @@ static void ieee80211_send_addba_resp(struct ieee80211_sub_if_data *sdata, u8 *d
 void __ieee80211_start_rx_ba_session(struct sta_info *sta,
 				     u8 dialog_token, u16 timeout,
 				     u16 start_seq_num, u16 ba_policy, u16 tid,
-				     u16 buf_size, bool tx)
+				     u16 buf_size, bool tx, bool auto_seq)
 {
 	struct ieee80211_local *local = sta->sdata->local;
 	struct tid_ampdu_rx *tid_agg_rx;
 	int i, ret = -EOPNOTSUPP;
 	u16 status = WLAN_STATUS_REQUEST_DECLINED;
+
+	if (!sta->sta.ht_cap.ht_supported) {
+		ht_dbg(sta->sdata,
+		       "STA %pM erroneously requests BA session on tid %d w/o QoS\n",
+		       sta->sta.addr, tid);
+		/* send a response anyway, it's an error case if we get here */
+		goto end_no_lock;
+	}
 
 	if (test_sta_flag(sta, WLAN_STA_BLOCK_BA)) {
 		ht_dbg(sta->sdata,
@@ -326,6 +338,7 @@ void __ieee80211_start_rx_ba_session(struct sta_info *sta,
 	tid_agg_rx->buf_size = buf_size;
 	tid_agg_rx->timeout = timeout;
 	tid_agg_rx->stored_mpdu_num = 0;
+	tid_agg_rx->auto_seq = auto_seq;
 	status = WLAN_STATUS_SUCCESS;
 
 	/* activate it for RX */
@@ -367,7 +380,7 @@ void ieee80211_process_addba_request(struct ieee80211_local *local,
 
 	__ieee80211_start_rx_ba_session(sta, dialog_token, timeout,
 					start_seq_num, ba_policy, tid,
-					buf_size, true);
+					buf_size, true, false);
 }
 
 void ieee80211_start_rx_ba_session_offl(struct ieee80211_vif *vif,

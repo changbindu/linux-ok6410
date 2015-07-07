@@ -26,19 +26,14 @@
 #include <linux/mfd/intel_soc_pmic.h>
 #include "intel_soc_pmic_core.h"
 
-/*
- * On some boards the PMIC interrupt may come from a GPIO line.
- * Try to lookup the ACPI table and see if such connection exists. If not,
- * return -ENOENT and use the IRQ provided by I2C.
- */
 static int intel_soc_pmic_find_gpio_irq(struct device *dev)
 {
 	struct gpio_desc *desc;
 	int irq;
 
-	desc = devm_gpiod_get_index(dev, "intel_soc_pmic", 0);
+	desc = devm_gpiod_get_index(dev, "intel_soc_pmic", 0, GPIOD_IN);
 	if (IS_ERR(desc))
-		return -ENOENT;
+		return PTR_ERR(desc);
 
 	irq = gpiod_to_irq(desc);
 	if (irq < 0)
@@ -64,10 +59,18 @@ static int intel_soc_pmic_i2c_probe(struct i2c_client *i2c,
 	config = (struct intel_soc_pmic_config *)id->driver_data;
 
 	pmic = devm_kzalloc(dev, sizeof(*pmic), GFP_KERNEL);
+	if (!pmic)
+		return -ENOMEM;
+
 	dev_set_drvdata(dev, pmic);
 
 	pmic->regmap = devm_regmap_init_i2c(i2c, config->regmap_config);
 
+	/*
+	 * On some boards the PMIC interrupt may come from a GPIO line. Try to
+	 * lookup the ACPI table for a such connection and setup a GPIO
+	 * interrupt if it exists. Otherwise use the IRQ provided by I2C
+	 */
 	irq = intel_soc_pmic_find_gpio_irq(dev);
 	pmic->irq = (irq < 0) ? i2c->irq : irq;
 
@@ -115,6 +118,7 @@ static void intel_soc_pmic_shutdown(struct i2c_client *i2c)
 	return;
 }
 
+#if defined(CONFIG_PM_SLEEP)
 static int intel_soc_pmic_suspend(struct device *dev)
 {
 	struct intel_soc_pmic *pmic = dev_get_drvdata(dev);
@@ -132,6 +136,7 @@ static int intel_soc_pmic_resume(struct device *dev)
 
 	return 0;
 }
+#endif
 
 static SIMPLE_DEV_PM_OPS(intel_soc_pmic_pm_ops, intel_soc_pmic_suspend,
 			 intel_soc_pmic_resume);

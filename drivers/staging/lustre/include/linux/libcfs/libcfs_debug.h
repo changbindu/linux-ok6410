@@ -80,7 +80,7 @@ struct ptldebug_header {
 	__u32 ph_pid;
 	__u32 ph_extern_pid;
 	__u32 ph_line_num;
-} __attribute__((packed));
+} __packed;
 
 #define PH_FLAG_FIRST_RECORD 1
 
@@ -196,7 +196,7 @@ do {								\
 	       .msg_fn     = __func__,				\
 	       .msg_line   = __LINE__,				\
 	       .msg_cdls   = (cdls)	 };			\
-	dataname.msg_mask   = (mask);
+	dataname.msg_mask   = (mask)
 
 /**
  * Filters out logging messages based on mask and subsystem.
@@ -242,32 +242,20 @@ do {									\
 
 #define LCONSOLE_EMERG(format, ...) CDEBUG(D_CONSOLE | D_EMERG, format, ## __VA_ARGS__)
 
-void libcfs_log_goto(struct libcfs_debug_msg_data *, const char *, long_ptr_t);
-#define GOTO(label, rc)							\
-do {									\
-	if (cfs_cdebug_show(D_TRACE, DEBUG_SUBSYSTEM)) {		\
-		LIBCFS_DEBUG_MSG_DATA_DECL(msgdata, D_TRACE, NULL);	\
-		libcfs_log_goto(&msgdata, #label, (long_ptr_t)(rc));	\
-	} else {							\
-		(void)(rc);						\
-	}								\
-	goto label;							\
-} while (0)
-
 int libcfs_debug_msg(struct libcfs_debug_msg_data *msgdata,
 			    const char *format1, ...)
-	__attribute__ ((format (printf, 2, 3)));
+	__printf(2, 3);
 
 int libcfs_debug_vmsg2(struct libcfs_debug_msg_data *msgdata,
 			      const char *format1,
 			      va_list args, const char *format2, ...)
-	__attribute__ ((format (printf, 4, 5)));
+	__printf(4, 5);
 
 /* other external symbols that tracefile provides: */
 int cfs_trace_copyin_string(char *knl_buffer, int knl_buffer_nob,
-				   const char *usr_buffer, int usr_buffer_nob);
-int cfs_trace_copyout_string(char *usr_buffer, int usr_buffer_nob,
-				    const char *knl_buffer, char *append);
+		const char __user *usr_buffer, int usr_buffer_nob);
+int cfs_trace_copyout_string(char __user *usr_buffer, int usr_buffer_nob,
+		const char *knl_buffer, char *append);
 
 #define LIBCFS_DEBUG_FILE_PATH_DEFAULT "/tmp/lustre-log"
 

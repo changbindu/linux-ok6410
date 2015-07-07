@@ -92,7 +92,6 @@ struct perf_kvm_stat {
 	u64 lost_events;
 	u64 duration;
 
-	const char *pid_str;
 	struct intlist *pid_list;
 
 	struct rb_root result;
@@ -100,6 +99,7 @@ struct perf_kvm_stat {
 	int timerfd;
 	unsigned int display_time;
 	bool live;
+	bool force;
 };
 
 struct kvm_reg_events_ops {

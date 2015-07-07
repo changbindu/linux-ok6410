@@ -444,7 +444,7 @@ arch_kexec_apply_relocations(const Elf_Ehdr *ehdr, Elf_Shdr *sechdrs,
 }
 
 /*
- * Free up memory used by kernel, initrd, and comand line. This is temporary
+ * Free up memory used by kernel, initrd, and command line. This is temporary
  * memory allocation which is not needed any more after these buffers have
  * been loaded into separate segments and have been copied elsewhere.
  */
@@ -600,7 +600,7 @@ kimage_file_alloc_init(struct kimage **rimage, int kernel_fd,
 	if (!kexec_on_panic) {
 		image->swap_page = kimage_alloc_control_pages(image, 0);
 		if (!image->swap_page) {
-			pr_err(KERN_ERR "Could not allocate swap buffer\n");
+			pr_err("Could not allocate swap buffer\n");
 			goto out_free_control_pages;
 		}
 	}
@@ -707,7 +707,7 @@ static struct page *kimage_alloc_normal_control_pages(struct kimage *image,
 	do {
 		unsigned long pfn, epfn, addr, eaddr;
 
-		pages = kimage_alloc_pages(GFP_KERNEL, order);
+		pages = kimage_alloc_pages(KEXEC_CONTROL_MEMORY_GFP, order);
 		if (!pages)
 			break;
 		pfn   = page_to_pfn(pages);
@@ -856,8 +856,6 @@ static int kimage_set_destination(struct kimage *image,
 
 	destination &= PAGE_MASK;
 	result = kimage_add_entry(image, destination | IND_DESTINATION);
-	if (result == 0)
-		image->destination = destination;
 
 	return result;
 }
@@ -869,8 +867,6 @@ static int kimage_add_page(struct kimage *image, unsigned long page)
 
 	page &= PAGE_MASK;
 	result = kimage_add_entry(image, page | IND_SOURCE);
-	if (result == 0)
-		image->destination += PAGE_SIZE;
 
 	return result;
 }
@@ -1288,19 +1284,22 @@ SYSCALL_DEFINE4(kexec_load, unsigned long, entry, unsigned long, nr_segments,
 	if (nr_segments > 0) {
 		unsigned long i;
 
-		/* Loading another kernel to reboot into */
-		if ((flags & KEXEC_ON_CRASH) == 0)
-			result = kimage_alloc_init(&image, entry, nr_segments,
-						   segments, flags);
-		/* Loading another kernel to switch to if this one crashes */
-		else if (flags & KEXEC_ON_CRASH) {
-			/* Free any current crash dump kernel before
+		if (flags & KEXEC_ON_CRASH) {
+			/*
+			 * Loading another kernel to switch to if this one
+			 * crashes.  Free any current crash dump kernel before
 			 * we corrupt it.
 			 */
+
 			kimage_free(xchg(&kexec_crash_image, NULL));
 			result = kimage_alloc_init(&image, entry, nr_segments,
 						   segments, flags);
 			crash_map_reserved_pages();
+		} else {
+			/* Loading another kernel to reboot into. */
+
+			result = kimage_alloc_init(&image, entry, nr_segments,
+						   segments, flags);
 		}
 		if (result)
 			goto out;
@@ -1759,7 +1758,6 @@ static __initdata char *suffix_tbl[] = {
  */
 static int __init parse_crashkernel_suffix(char *cmdline,
 					   unsigned long long	*crash_size,
-					   unsigned long long	*crash_base,
 					   const char *suffix)
 {
 	char *cur = cmdline;
@@ -1848,7 +1846,7 @@ static int __init __parse_crashkernel(char *cmdline,
 
 	if (suffix)
 		return parse_crashkernel_suffix(ck_cmdline, crash_size,
-				crash_base, suffix);
+				suffix);
 	/*
 	 * if the commandline contains a ':', then that's the extended
 	 * syntax -- if not, it must be the classic syntax
@@ -2016,22 +2014,6 @@ static int __init crash_save_vmcoreinfo_init(void)
 subsys_initcall(crash_save_vmcoreinfo_init);
 
 #ifdef CONFIG_KEXEC_FILE
-static int __kexec_add_segment(struct kimage *image, char *buf,
-			       unsigned long bufsz, unsigned long mem,
-			       unsigned long memsz)
-{
-	struct kexec_segment *ksegment;
-
-	ksegment = &image->segment[image->nr_segments];
-	ksegment->kbuf = buf;
-	ksegment->bufsz = bufsz;
-	ksegment->mem = mem;
-	ksegment->memsz = memsz;
-	image->nr_segments++;
-
-	return 0;
-}
-
 static int locate_mem_hole_top_down(unsigned long start, unsigned long end,
 				    struct kexec_buf *kbuf)
 {
@@ -2064,8 +2046,7 @@ static int locate_mem_hole_top_down(unsigned long start, unsigned long end,
 	} while (1);
 
 	/* If we are here, we found a suitable memory range */
-	__kexec_add_segment(image, kbuf->buffer, kbuf->bufsz, temp_start,
-			    kbuf->memsz);
+	kbuf->mem = temp_start;
 
 	/* Success, stop navigating through remaining System RAM ranges */
 	return 1;
@@ -2099,8 +2080,7 @@ static int locate_mem_hole_bottom_up(unsigned long start, unsigned long end,
 	} while (1);
 
 	/* If we are here, we found a suitable memory range */
-	__kexec_add_segment(image, kbuf->buffer, kbuf->bufsz, temp_start,
-			    kbuf->memsz);
+	kbuf->mem = temp_start;
 
 	/* Success, stop navigating through remaining System RAM ranges */
 	return 1;
@@ -2187,7 +2167,12 @@ int kexec_add_buffer(struct kimage *image, char *buffer, unsigned long bufsz,
 	}
 
 	/* Found a suitable memory range */
-	ksegment = &image->segment[image->nr_segments - 1];
+	ksegment = &image->segment[image->nr_segments];
+	ksegment->kbuf = kbuf->buffer;
+	ksegment->bufsz = kbuf->bufsz;
+	ksegment->mem = kbuf->mem;
+	ksegment->memsz = kbuf->memsz;
+	image->nr_segments++;
 	*load_addr = ksegment->mem;
 	return 0;
 }
@@ -2526,7 +2511,7 @@ static int kexec_apply_relocations(struct kimage *image)
 			continue;
 
 		/*
-		 * Respective archicture needs to provide support for applying
+		 * Respective architecture needs to provide support for applying
 		 * relocations of type SHT_RELA/SHT_REL.
 		 */
 		if (sechdrs[i].sh_type == SHT_RELA)

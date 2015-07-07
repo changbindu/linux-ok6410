@@ -121,7 +121,6 @@
 #include "xgbe.h"
 #include "xgbe-common.h"
 
-
 static ssize_t xgbe_common_read(char __user *buffer, size_t count,
 				loff_t *ppos, unsigned int value)
 {
@@ -329,7 +328,7 @@ void xgbe_debugfs_init(struct xgbe_prv_data *pdata)
 
 	buf = kasprintf(GFP_KERNEL, "amd-xgbe-%s", pdata->netdev->name);
 	pdata->xgbe_debugfs = debugfs_create_dir(buf, NULL);
-	if (pdata->xgbe_debugfs == NULL) {
+	if (!pdata->xgbe_debugfs) {
 		netdev_err(pdata->netdev, "debugfs_create_dir failed\n");
 		return;
 	}

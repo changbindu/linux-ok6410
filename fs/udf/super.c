@@ -48,7 +48,6 @@
 #include <linux/stat.h>
 #include <linux/cdrom.h>
 #include <linux/nls.h>
-#include <linux/buffer_head.h>
 #include <linux/vfs.h>
 #include <linux/vmalloc.h>
 #include <linux/errno.h>
@@ -959,7 +958,7 @@ struct inode *udf_find_metadata_inode_efe(struct super_block *sb,
 	addr.logicalBlockNum = meta_file_loc;
 	addr.partitionReferenceNum = partition_num;
 
-	metadata_fe = udf_iget(sb, &addr);
+	metadata_fe = udf_iget_special(sb, &addr);
 
 	if (IS_ERR(metadata_fe)) {
 		udf_warn(sb, "metadata inode efe not found\n");
@@ -1020,7 +1019,7 @@ static int udf_load_metadata_files(struct super_block *sb, int partition)
 		udf_debug("Bitmap file location: block = %d part = %d\n",
 			  addr.logicalBlockNum, addr.partitionReferenceNum);
 
-		fe = udf_iget(sb, &addr);
+		fe = udf_iget_special(sb, &addr);
 		if (IS_ERR(fe)) {
 			if (sb->s_flags & MS_RDONLY)
 				udf_warn(sb, "bitmap inode efe not found but it's ok since the disc is mounted read-only\n");
@@ -1119,7 +1118,7 @@ static int udf_fill_partdesc_info(struct super_block *sb,
 		};
 		struct inode *inode;
 
-		inode = udf_iget(sb, &loc);
+		inode = udf_iget_special(sb, &loc);
 		if (IS_ERR(inode)) {
 			udf_debug("cannot load unallocSpaceTable (part %d)\n",
 				  p_index);
@@ -1154,7 +1153,7 @@ static int udf_fill_partdesc_info(struct super_block *sb,
 		};
 		struct inode *inode;
 
-		inode = udf_iget(sb, &loc);
+		inode = udf_iget_special(sb, &loc);
 		if (IS_ERR(inode)) {
 			udf_debug("cannot load freedSpaceTable (part %d)\n",
 				  p_index);
@@ -1198,7 +1197,7 @@ static void udf_find_vat_block(struct super_block *sb, int p_index,
 	     vat_block >= map->s_partition_root &&
 	     vat_block >= start_block - 3; vat_block--) {
 		ino.logicalBlockNum = vat_block - map->s_partition_root;
-		inode = udf_iget(sb, &ino);
+		inode = udf_iget_special(sb, &ino);
 		if (!IS_ERR(inode)) {
 			sbi->s_vat_inode = inode;
 			break;
@@ -1599,7 +1598,7 @@ static noinline int udf_process_sequence(
 	struct udf_vds_record *curr;
 	struct generic_desc *gd;
 	struct volDescPtr *vdp;
-	int done = 0;
+	bool done = false;
 	uint32_t vdsn;
 	uint16_t ident;
 	long next_s = 0, next_e = 0;
@@ -1680,7 +1679,7 @@ static noinline int udf_process_sequence(
 				lastblock = next_e;
 				next_s = next_e = 0;
 			} else
-				done = 1;
+				done = true;
 			break;
 		}
 		brelse(bh);
@@ -2082,12 +2081,12 @@ static int udf_fill_super(struct super_block *sb, void *options, int silent)
 	mutex_init(&sbi->s_alloc_mutex);
 
 	if (!udf_parse_options((char *)options, &uopt, false))
-		goto error_out;
+		goto parse_options_failure;
 
 	if (uopt.flags & (1 << UDF_FLAG_UTF8) &&
 	    uopt.flags & (1 << UDF_FLAG_NLS_MAP)) {
 		udf_err(sb, "utf8 cannot be combined with iocharset\n");
-		goto error_out;
+		goto parse_options_failure;
 	}
 #ifdef CONFIG_UDF_NLS
 	if ((uopt.flags & (1 << UDF_FLAG_NLS_MAP)) && !uopt.nls_map) {
@@ -2237,8 +2236,8 @@ static int udf_fill_super(struct super_block *sb, void *options, int silent)
 	return 0;
 
 error_out:
-	if (sbi->s_vat_inode)
-		iput(sbi->s_vat_inode);
+	iput(sbi->s_vat_inode);
+parse_options_failure:
 #ifdef CONFIG_UDF_NLS
 	if (UDF_QUERY_FLAG(sb, UDF_FLAG_NLS_MAP))
 		unload_nls(sbi->s_nls_map);
@@ -2291,8 +2290,7 @@ static void udf_put_super(struct super_block *sb)
 
 	sbi = UDF_SB(sb);
 
-	if (sbi->s_vat_inode)
-		iput(sbi->s_vat_inode);
+	iput(sbi->s_vat_inode);
 #ifdef CONFIG_UDF_NLS
 	if (UDF_QUERY_FLAG(sb, UDF_FLAG_NLS_MAP))
 		unload_nls(sbi->s_nls_map);
@@ -2301,6 +2299,7 @@ static void udf_put_super(struct super_block *sb)
 		udf_close_lvid(sb);
 	brelse(sbi->s_lvid_bh);
 	udf_sb_free_partitions(sb);
+	mutex_destroy(&sbi->s_alloc_mutex);
 	kfree(sb->s_fs_info);
 	sb->s_fs_info = NULL;
 }

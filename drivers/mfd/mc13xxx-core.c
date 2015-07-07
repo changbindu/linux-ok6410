@@ -36,6 +36,9 @@
 #define MC34708_REVISION_FIN		(0x07 <<  6)
 #define MC34708_REVISION_FAB		(0x07 <<  9)
 
+#define MC13XXX_PWRCTRL		15
+#define MC13XXX_PWRCTRL_WDIRESET	(1 << 12)
+
 #define MC13XXX_ADC1		44
 #define MC13XXX_ADC1_ADEN		(1 << 0)
 #define MC13XXX_ADC1_RAND		(1 << 1)
@@ -48,19 +51,19 @@
 void mc13xxx_lock(struct mc13xxx *mc13xxx)
 {
 	if (!mutex_trylock(&mc13xxx->lock)) {
-		dev_dbg(mc13xxx->dev, "wait for %s from %pf\n",
+		dev_dbg(mc13xxx->dev, "wait for %s from %ps\n",
 				__func__, __builtin_return_address(0));
 
 		mutex_lock(&mc13xxx->lock);
 	}
-	dev_dbg(mc13xxx->dev, "%s from %pf\n",
+	dev_dbg(mc13xxx->dev, "%s from %ps\n",
 			__func__, __builtin_return_address(0));
 }
 EXPORT_SYMBOL(mc13xxx_lock);
 
 void mc13xxx_unlock(struct mc13xxx *mc13xxx)
 {
-	dev_dbg(mc13xxx->dev, "%s from %pf\n",
+	dev_dbg(mc13xxx->dev, "%s from %ps\n",
 			__func__, __builtin_return_address(0));
 	mutex_unlock(&mc13xxx->lock);
 }
@@ -415,6 +418,11 @@ int mc13xxx_common_init(struct device *dev)
 		return ret;
 
 	mc13xxx->variant->print_revision(mc13xxx, revision);
+
+	ret = mc13xxx_reg_rmw(mc13xxx, MC13XXX_PWRCTRL,
+			MC13XXX_PWRCTRL_WDIRESET, MC13XXX_PWRCTRL_WDIRESET);
+	if (ret)
+		return ret;
 
 	for (i = 0; i < ARRAY_SIZE(mc13xxx->irqs); i++) {
 		mc13xxx->irqs[i].reg_offset = i / MC13XXX_IRQ_PER_REG;

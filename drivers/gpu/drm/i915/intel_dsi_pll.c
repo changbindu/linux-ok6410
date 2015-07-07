@@ -134,8 +134,7 @@ static u32 dsi_rr_formula(const struct drm_display_mode *mode,
 #else
 
 /* Get DSI clock from pixel clock */
-static u32 dsi_clk_from_pclk(const struct drm_display_mode *mode,
-			  int pixel_format, int lane_count)
+static u32 dsi_clk_from_pclk(u32 pclk, int pixel_format, int lane_count)
 {
 	u32 dsi_clk_khz;
 	u32 bpp;
@@ -156,7 +155,7 @@ static u32 dsi_clk_from_pclk(const struct drm_display_mode *mode,
 
 	/* DSI data rate = pixel clock * bits per pixel / lane count
 	   pixel clock is converted from KHz to Hz */
-	dsi_clk_khz = DIV_ROUND_CLOSEST(mode->clock * bpp, lane_count);
+	dsi_clk_khz = DIV_ROUND_CLOSEST(pclk * bpp, lane_count);
 
 	return dsi_clk_khz;
 }
@@ -191,7 +190,7 @@ static int dsi_calc_mnp(u32 dsi_clk, struct dsi_mnp *dsi_mnp)
 	for (m = 62; m <= 92; m++) {
 		for (p = 2; p <= 6; p++) {
 			/* Find the optimal m and p divisors
-			with minimal error +/- the required clock */
+			   with minimal error +/- the required clock */
 			calc_dsi_clk = (m * ref_clk) / p;
 			if (calc_dsi_clk == target_dsi_clk) {
 				calc_m = m;
@@ -228,15 +227,13 @@ static int dsi_calc_mnp(u32 dsi_clk, struct dsi_mnp *dsi_mnp)
 static void vlv_configure_dsi_pll(struct intel_encoder *encoder)
 {
 	struct drm_i915_private *dev_priv = encoder->base.dev->dev_private;
-	struct intel_crtc *intel_crtc = to_intel_crtc(encoder->base.crtc);
-	const struct drm_display_mode *mode = &intel_crtc->config.adjusted_mode;
 	struct intel_dsi *intel_dsi = enc_to_intel_dsi(&encoder->base);
 	int ret;
 	struct dsi_mnp dsi_mnp;
 	u32 dsi_clk;
 
-	dsi_clk = dsi_clk_from_pclk(mode, intel_dsi->pixel_format,
-						intel_dsi->lane_count);
+	dsi_clk = dsi_clk_from_pclk(intel_dsi->pclk, intel_dsi->pixel_format,
+				    intel_dsi->lane_count);
 
 	ret = dsi_calc_mnp(dsi_clk, &dsi_mnp);
 	if (ret) {
@@ -244,7 +241,11 @@ static void vlv_configure_dsi_pll(struct intel_encoder *encoder)
 		return;
 	}
 
-	dsi_mnp.dsi_pll_ctrl |= DSI_PLL_CLK_GATE_DSI0_DSIPLL;
+	if (intel_dsi->ports & (1 << PORT_A))
+		dsi_mnp.dsi_pll_ctrl |= DSI_PLL_CLK_GATE_DSI0_DSIPLL;
+
+	if (intel_dsi->ports & (1 << PORT_C))
+		dsi_mnp.dsi_pll_ctrl |= DSI_PLL_CLK_GATE_DSI1_DSIPLL;
 
 	DRM_DEBUG_KMS("dsi pll div %08x, ctrl %08x\n",
 		      dsi_mnp.dsi_pll_div, dsi_mnp.dsi_pll_ctrl);
@@ -272,12 +273,14 @@ void vlv_enable_dsi_pll(struct intel_encoder *encoder)
 	tmp |= DSI_PLL_VCO_EN;
 	vlv_cck_write(dev_priv, CCK_REG_DSI_PLL_CONTROL, tmp);
 
-	mutex_unlock(&dev_priv->dpio_lock);
+	if (wait_for(vlv_cck_read(dev_priv, CCK_REG_DSI_PLL_CONTROL) &
+						DSI_PLL_LOCK, 20)) {
 
-	if (wait_for(I915_READ(PIPECONF(PIPE_A)) & PIPECONF_DSI_PLL_LOCKED, 20)) {
+		mutex_unlock(&dev_priv->dpio_lock);
 		DRM_ERROR("DSI PLL lock failed\n");
 		return;
 	}
+	mutex_unlock(&dev_priv->dpio_lock);
 
 	DRM_DEBUG_KMS("DSI PLL locked\n");
 }
@@ -318,8 +321,8 @@ static void assert_bpp_mismatch(int pixel_format, int pipe_bpp)
 	}
 
 	WARN(bpp != pipe_bpp,
-		"bpp match assertion failure (expected %d, current %d)\n",
-		bpp, pipe_bpp);
+	     "bpp match assertion failure (expected %d, current %d)\n",
+	     bpp, pipe_bpp);
 }
 
 u32 vlv_get_dsi_pclk(struct intel_encoder *encoder, int pipe_bpp)

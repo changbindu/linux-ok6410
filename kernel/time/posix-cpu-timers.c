@@ -272,22 +272,8 @@ static int posix_cpu_clock_get_task(struct task_struct *tsk,
 		if (same_thread_group(tsk, current))
 			err = cpu_clock_sample(which_clock, tsk, &rtn);
 	} else {
-		unsigned long flags;
-		struct sighand_struct *sighand;
-
-		/*
-		 * while_each_thread() is not yet entirely RCU safe,
-		 * keep locking the group while sampling process
-		 * clock for now.
-		 */
-		sighand = lock_task_sighand(tsk, &flags);
-		if (!sighand)
-			return err;
-
 		if (tsk == current || thread_group_leader(tsk))
 			err = cpu_clock_sample_group(which_clock, tsk, &rtn);
-
-		unlock_task_sighand(tsk, &flags);
 	}
 
 	if (!err)
@@ -567,7 +553,7 @@ static int cpu_timer_sample_group(const clockid_t which_clock,
 		*sample = cputime_to_expires(cputime.utime);
 		break;
 	case CPUCLOCK_SCHED:
-		*sample = cputime.sum_exec_runtime + task_delta_exec(p);
+		*sample = cputime.sum_exec_runtime;
 		break;
 	}
 	return 0;
@@ -1348,8 +1334,7 @@ static long posix_cpu_nsleep_restart(struct restart_block *restart_block);
 static int posix_cpu_nsleep(const clockid_t which_clock, int flags,
 			    struct timespec *rqtp, struct timespec __user *rmtp)
 {
-	struct restart_block *restart_block =
-		&current_thread_info()->restart_block;
+	struct restart_block *restart_block = &current->restart_block;
 	struct itimerspec it;
 	int error;
 

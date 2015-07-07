@@ -158,7 +158,8 @@ static int mgag200fb_create_object(struct mga_fbdev *afbdev,
 static int mgag200fb_create(struct drm_fb_helper *helper,
 			   struct drm_fb_helper_surface_size *sizes)
 {
-	struct mga_fbdev *mfbdev = (struct mga_fbdev *)helper;
+	struct mga_fbdev *mfbdev =
+		container_of(helper, struct mga_fbdev, helper);
 	struct drm_device *dev = mfbdev->helper.dev;
 	struct drm_mode_fb_cmd2 mode_cmd;
 	struct mga_device *mdev = dev->dev_private;
@@ -302,14 +303,22 @@ int mgag200_fbdev_init(struct mga_device *mdev)
 	if (ret)
 		return ret;
 
-	drm_fb_helper_single_add_all_connectors(&mfbdev->helper);
+	ret = drm_fb_helper_single_add_all_connectors(&mfbdev->helper);
+	if (ret)
+		goto fini;
 
 	/* disable all the possible outputs/crtcs before entering KMS mode */
 	drm_helper_disable_unused_functions(mdev->dev);
 
-	drm_fb_helper_initial_config(&mfbdev->helper, bpp_sel);
+	ret = drm_fb_helper_initial_config(&mfbdev->helper, bpp_sel);
+	if (ret)
+		goto fini;
 
 	return 0;
+
+fini:
+	drm_fb_helper_fini(&mfbdev->helper);
+	return ret;
 }
 
 void mgag200_fbdev_fini(struct mga_device *mdev)

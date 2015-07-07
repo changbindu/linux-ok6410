@@ -13,16 +13,17 @@
 #include <asm/setup.h>
 #include <asm/desc.h>
 
-#undef memcpy			/* Use memcpy from misc.c */
-
+#include "../string.h"
 #include "eboot.h"
 
 static efi_system_table_t *sys_table;
 
 static struct efi_config *efi_early;
 
-#define efi_call_early(f, ...)						\
-	efi_early->call(efi_early->f, __VA_ARGS__);
+__pure const struct efi_config *__efi_early(void)
+{
+	return efi_early;
+}
 
 #define BOOT_SERVICES(bits)						\
 static void setup_boot_services##bits(struct efi_config *c)		\
@@ -285,8 +286,6 @@ void efi_char16_printk(efi_system_table_t *table, efi_char16_t *str)
 	}
 }
 
-#include "../../../../drivers/firmware/efi/libstub/efi-stub-helper.c"
-
 static void find_bits(unsigned long mask, u8 *pos, u8 *size)
 {
 	u8 first, len;
@@ -330,8 +329,10 @@ __setup_efi_pci32(efi_pci_io_protocol_32 *pci, struct pci_setup_rom **__rom)
 	size = pci->romsize + sizeof(*rom);
 
 	status = efi_call_early(allocate_pool, EFI_LOADER_DATA, size, &rom);
-	if (status != EFI_SUCCESS)
+	if (status != EFI_SUCCESS) {
+		efi_printk(sys_table, "Failed to alloc mem for rom\n");
 		return status;
+	}
 
 	memset(rom, 0, sizeof(*rom));
 
@@ -344,14 +345,18 @@ __setup_efi_pci32(efi_pci_io_protocol_32 *pci, struct pci_setup_rom **__rom)
 	status = efi_early->call(pci->pci.read, pci, EfiPciIoWidthUint16,
 				 PCI_VENDOR_ID, 1, &(rom->vendor));
 
-	if (status != EFI_SUCCESS)
+	if (status != EFI_SUCCESS) {
+		efi_printk(sys_table, "Failed to read rom->vendor\n");
 		goto free_struct;
+	}
 
 	status = efi_early->call(pci->pci.read, pci, EfiPciIoWidthUint16,
 				 PCI_DEVICE_ID, 1, &(rom->devid));
 
-	if (status != EFI_SUCCESS)
+	if (status != EFI_SUCCESS) {
+		efi_printk(sys_table, "Failed to read rom->devid\n");
 		goto free_struct;
+	}
 
 	status = efi_early->call(pci->get_location, pci, &(rom->segment),
 				 &(rom->bus), &(rom->device), &(rom->function));
@@ -432,8 +437,10 @@ __setup_efi_pci64(efi_pci_io_protocol_64 *pci, struct pci_setup_rom **__rom)
 	size = pci->romsize + sizeof(*rom);
 
 	status = efi_call_early(allocate_pool, EFI_LOADER_DATA, size, &rom);
-	if (status != EFI_SUCCESS)
+	if (status != EFI_SUCCESS) {
+		efi_printk(sys_table, "Failed to alloc mem for rom\n");
 		return status;
+	}
 
 	rom->data.type = SETUP_PCI;
 	rom->data.len = size - sizeof(struct setup_data);
@@ -444,14 +451,18 @@ __setup_efi_pci64(efi_pci_io_protocol_64 *pci, struct pci_setup_rom **__rom)
 	status = efi_early->call(pci->pci.read, pci, EfiPciIoWidthUint16,
 				 PCI_VENDOR_ID, 1, &(rom->vendor));
 
-	if (status != EFI_SUCCESS)
+	if (status != EFI_SUCCESS) {
+		efi_printk(sys_table, "Failed to read rom->vendor\n");
 		goto free_struct;
+	}
 
 	status = efi_early->call(pci->pci.read, pci, EfiPciIoWidthUint16,
 				 PCI_DEVICE_ID, 1, &(rom->devid));
 
-	if (status != EFI_SUCCESS)
+	if (status != EFI_SUCCESS) {
+		efi_printk(sys_table, "Failed to read rom->devid\n");
 		goto free_struct;
+	}
 
 	status = efi_early->call(pci->get_location, pci, &(rom->segment),
 				 &(rom->bus), &(rom->device), &(rom->function));
@@ -538,8 +549,10 @@ static void setup_efi_pci(struct boot_params *params)
 					EFI_LOADER_DATA,
 					size, (void **)&pci_handle);
 
-		if (status != EFI_SUCCESS)
+		if (status != EFI_SUCCESS) {
+			efi_printk(sys_table, "Failed to alloc mem for pci_handle\n");
 			return;
+		}
 
 		status = efi_call_early(locate_handle,
 					EFI_LOCATE_BY_PROTOCOL, &pci_proto,
@@ -1096,6 +1109,8 @@ struct boot_params *make_boot_params(struct efi_config *c)
 	if (!cmdline_ptr)
 		goto fail;
 	hdr->cmd_line_ptr = (unsigned long)cmdline_ptr;
+	/* Fill in upper bits of command line address, NOP on 32 bit  */
+	boot_params->ext_cmd_line_ptr = (u64)(unsigned long)cmdline_ptr >> 32;
 
 	hdr->ramdisk_image = 0;
 	hdr->ramdisk_size = 0;
@@ -1104,6 +1119,10 @@ struct boot_params *make_boot_params(struct efi_config *c)
 	memset(bi, 0, sizeof(*bi));
 
 	memset(sdt, 0, sizeof(*sdt));
+
+	status = efi_parse_options(cmdline_ptr);
+	if (status != EFI_SUCCESS)
+		goto fail2;
 
 	status = handle_cmdline_files(sys_table, image,
 				      (char *)(unsigned long)hdr->cmd_line_ptr,

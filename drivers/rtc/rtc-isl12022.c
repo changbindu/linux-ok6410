@@ -274,8 +274,9 @@ static int isl12022_probe(struct i2c_client *client,
 }
 
 #ifdef CONFIG_OF
-static struct of_device_id isl12022_dt_match[] = {
-	{ .compatible = "isl,isl12022" },
+static const struct of_device_id isl12022_dt_match[] = {
+	{ .compatible = "isl,isl12022" }, /* for backward compat., don't use */
+	{ .compatible = "isil,isl12022" },
 	{ },
 };
 #endif

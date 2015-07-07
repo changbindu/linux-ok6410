@@ -33,6 +33,7 @@
 #include "phy_lp.h"
 #include "phy_ht.h"
 #include "phy_lcn.h"
+#include "phy_ac.h"
 #include "b43.h"
 #include "main.h"
 
@@ -68,6 +69,11 @@ int b43_phy_allocate(struct b43_wldev *dev)
 	case B43_PHYTYPE_LCN:
 #ifdef CONFIG_B43_PHY_LCN
 		phy->ops = &b43_phyops_lcn;
+#endif
+		break;
+	case B43_PHYTYPE_AC:
+#ifdef CONFIG_B43_PHY_AC
+		phy->ops = &b43_phyops_ac;
 #endif
 		break;
 	}
@@ -222,12 +228,18 @@ static inline void assert_mac_suspended(struct b43_wldev *dev)
 u16 b43_radio_read(struct b43_wldev *dev, u16 reg)
 {
 	assert_mac_suspended(dev);
+	dev->phy.writes_counter = 0;
 	return dev->phy.ops->radio_read(dev, reg);
 }
 
 void b43_radio_write(struct b43_wldev *dev, u16 reg, u16 value)
 {
 	assert_mac_suspended(dev);
+	if (b43_bus_host_is_pci(dev->dev) &&
+	    ++dev->phy.writes_counter > B43_MAX_WRITES_IN_ROW) {
+		b43_read32(dev, B43_MMIO_MACCTL);
+		dev->phy.writes_counter = 1;
+	}
 	dev->phy.ops->radio_write(dev, reg, value);
 }
 
@@ -268,24 +280,33 @@ u16 b43_phy_read(struct b43_wldev *dev, u16 reg)
 {
 	assert_mac_suspended(dev);
 	dev->phy.writes_counter = 0;
-	return dev->phy.ops->phy_read(dev, reg);
+
+	if (dev->phy.ops->phy_read)
+		return dev->phy.ops->phy_read(dev, reg);
+
+	b43_write16f(dev, B43_MMIO_PHY_CONTROL, reg);
+	return b43_read16(dev, B43_MMIO_PHY_DATA);
 }
 
 void b43_phy_write(struct b43_wldev *dev, u16 reg, u16 value)
 {
 	assert_mac_suspended(dev);
-	dev->phy.ops->phy_write(dev, reg, value);
-	if (++dev->phy.writes_counter == B43_MAX_WRITES_IN_ROW) {
+	if (b43_bus_host_is_pci(dev->dev) &&
+	    ++dev->phy.writes_counter > B43_MAX_WRITES_IN_ROW) {
 		b43_read16(dev, B43_MMIO_PHY_VER);
-		dev->phy.writes_counter = 0;
+		dev->phy.writes_counter = 1;
 	}
+
+	if (dev->phy.ops->phy_write)
+		return dev->phy.ops->phy_write(dev, reg, value);
+
+	b43_write16f(dev, B43_MMIO_PHY_CONTROL, reg);
+	b43_write16(dev, B43_MMIO_PHY_DATA, value);
 }
 
 void b43_phy_copy(struct b43_wldev *dev, u16 destreg, u16 srcreg)
 {
-	assert_mac_suspended(dev);
-	dev->phy.ops->phy_write(dev, destreg,
-		dev->phy.ops->phy_read(dev, srcreg));
+	b43_phy_write(dev, destreg, b43_phy_read(dev, srcreg));
 }
 
 void b43_phy_mask(struct b43_wldev *dev, u16 offset, u16 mask)
@@ -557,7 +578,8 @@ void b43_phy_force_clock(struct b43_wldev *dev, bool force)
 	u32 tmp;
 
 	WARN_ON(dev->phy.type != B43_PHYTYPE_N &&
-		dev->phy.type != B43_PHYTYPE_HT);
+		dev->phy.type != B43_PHYTYPE_HT &&
+		dev->phy.type != B43_PHYTYPE_AC);
 
 	switch (dev->dev->bus_type) {
 #ifdef CONFIG_B43_BCMA

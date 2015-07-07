@@ -132,7 +132,7 @@ extern int __pmd_trans_huge_lock(pmd_t *pmd, struct vm_area_struct *vma,
 static inline int pmd_trans_huge_lock(pmd_t *pmd, struct vm_area_struct *vma,
 		spinlock_t **ptl)
 {
-	VM_BUG_ON(!rwsem_is_locked(&vma->vm_mm->mmap_sem));
+	VM_BUG_ON_VMA(!rwsem_is_locked(&vma->vm_mm->mmap_sem), vma);
 	if (pmd_trans_huge(*pmd))
 		return __pmd_trans_huge_lock(pmd, vma, ptl);
 	else
@@ -156,6 +156,13 @@ static inline int hpage_nr_pages(struct page *page)
 
 extern int do_huge_pmd_numa_page(struct mm_struct *mm, struct vm_area_struct *vma,
 				unsigned long addr, pmd_t pmd, pmd_t *pmdp);
+
+extern struct page *huge_zero_page;
+
+static inline bool is_huge_zero_page(struct page *page)
+{
+	return ACCESS_ONCE(huge_zero_page) == page;
+}
 
 #else /* CONFIG_TRANSPARENT_HUGEPAGE */
 #define HPAGE_PMD_SHIFT ({ BUILD_BUG(); 0; })
@@ -204,6 +211,11 @@ static inline int do_huge_pmd_numa_page(struct mm_struct *mm, struct vm_area_str
 					unsigned long addr, pmd_t pmd, pmd_t *pmdp)
 {
 	return 0;
+}
+
+static inline bool is_huge_zero_page(struct page *page)
+{
+	return false;
 }
 
 #endif /* CONFIG_TRANSPARENT_HUGEPAGE */

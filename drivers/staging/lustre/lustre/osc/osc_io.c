@@ -63,6 +63,7 @@ static struct osc_io *cl2osc_io(const struct lu_env *env,
 				const struct cl_io_slice *slice)
 {
 	struct osc_io *oio = container_of0(slice, struct osc_io, oi_cl);
+
 	LINVRNT(oio == osc_env_io(env));
 	return oio;
 }
@@ -360,6 +361,7 @@ static int trunc_check_cb(const struct lu_env *env, struct cl_io *io,
 
 	{
 		struct page *vmpage = cl_page_vmpage(env, page);
+
 		if (PageLocked(vmpage))
 			CDEBUG(D_CACHE, "page %p index %lu locked for %d.\n",
 			       ops, page->cp_index,
@@ -415,7 +417,7 @@ static int osc_io_setattr_start(const struct lu_env *env,
 
 			if (ia_valid & ATTR_SIZE) {
 				attr->cat_size = attr->cat_kms = size;
-				cl_valid = (CAT_SIZE | CAT_KMS);
+				cl_valid = CAT_SIZE | CAT_KMS;
 			}
 			if (ia_valid & ATTR_MTIME_SET) {
 				attr->cat_mtime = lvb->lvb_mtime;
@@ -498,6 +500,7 @@ static void osc_io_setattr_end(const struct lu_env *env,
 
 	if (cl_io_is_trunc(io)) {
 		__u64 size = io->u.ci_setattr.sa_attr.lvb_size;
+
 		osc_trunc_check(env, io, oio, size);
 		if (oio->oi_trunc != NULL) {
 			osc_cache_truncate_end(env, oio, cl2osc(obj));
@@ -711,7 +714,7 @@ static void osc_req_completion(const struct lu_env *env,
 static void osc_req_attr_set(const struct lu_env *env,
 			     const struct cl_req_slice *slice,
 			     const struct cl_object *obj,
-			     struct cl_req_attr *attr, obd_valid flags)
+			     struct cl_req_attr *attr, u64 flags)
 {
 	struct lov_oinfo *oinfo;
 	struct cl_req    *clerq;

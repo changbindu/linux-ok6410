@@ -105,7 +105,7 @@ static void ri_tasklet(unsigned long dev)
 		if (from & AT_EGRESS) {
 			dev_queue_xmit(skb);
 		} else if (from & AT_INGRESS) {
-			skb_pull(skb, skb->dev->hard_header_len);
+			skb_pull(skb, skb->mac_len);
 			netif_receive_skb(skb);
 		} else
 			BUG();
@@ -185,7 +185,8 @@ static void ifb_setup(struct net_device *dev)
 
 	dev->flags |= IFF_NOARP;
 	dev->flags &= ~IFF_MULTICAST;
-	dev->priv_flags &= ~(IFF_XMIT_DST_RELEASE | IFF_TX_SKB_SHARING);
+	dev->priv_flags &= ~IFF_TX_SKB_SHARING;
+	netif_keep_dst(dev);
 	eth_hw_addr_random(dev);
 }
 

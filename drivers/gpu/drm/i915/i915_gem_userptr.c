@@ -113,7 +113,10 @@ restart:
 			continue;
 
 		obj = mo->obj;
-		drm_gem_object_reference(&obj->base);
+
+		if (!kref_get_unless_zero(&obj->base.refcount))
+			continue;
+
 		spin_unlock(&mn->lock);
 
 		cancel_userptr(obj);
@@ -149,7 +152,20 @@ static void i915_gem_userptr_mn_invalidate_range_start(struct mmu_notifier *_mn,
 			it = interval_tree_iter_first(&mn->objects, start, end);
 		if (it != NULL) {
 			obj = container_of(it, struct i915_mmu_object, it)->obj;
-			drm_gem_object_reference(&obj->base);
+
+			/* The mmu_object is released late when destroying the
+			 * GEM object so it is entirely possible to gain a
+			 * reference on an object in the process of being freed
+			 * since our serialisation is via the spinlock and not
+			 * the struct_mutex - and consequently use it after it
+			 * is freed and then double free it.
+			 */
+			if (!kref_get_unless_zero(&obj->base.refcount)) {
+				spin_unlock(&mn->lock);
+				serial = 0;
+				continue;
+			}
+
 			serial = mn->serial;
 		}
 		spin_unlock(&mn->lock);
@@ -293,15 +309,23 @@ i915_gem_userptr_release__mmu_notifier(struct drm_i915_gem_object *obj)
 static struct i915_mmu_notifier *
 i915_mmu_notifier_find(struct i915_mm_struct *mm)
 {
-	if (mm->mn == NULL) {
-		down_write(&mm->mm->mmap_sem);
-		mutex_lock(&to_i915(mm->dev)->mm_lock);
-		if (mm->mn == NULL)
-			mm->mn = i915_mmu_notifier_create(mm->mm);
-		mutex_unlock(&to_i915(mm->dev)->mm_lock);
-		up_write(&mm->mm->mmap_sem);
+	struct i915_mmu_notifier *mn = mm->mn;
+
+	mn = mm->mn;
+	if (mn)
+		return mn;
+
+	down_write(&mm->mm->mmap_sem);
+	mutex_lock(&to_i915(mm->dev)->mm_lock);
+	if ((mn = mm->mn) == NULL) {
+		mn = i915_mmu_notifier_create(mm->mm);
+		if (!IS_ERR(mn))
+			mm->mn = mn;
 	}
-	return mm->mn;
+	mutex_unlock(&to_i915(mm->dev)->mm_lock);
+	up_write(&mm->mm->mmap_sem);
+
+	return mn;
 }
 
 static int
@@ -681,16 +705,15 @@ i915_gem_userptr_get_pages(struct drm_i915_gem_object *obj)
 static void
 i915_gem_userptr_put_pages(struct drm_i915_gem_object *obj)
 {
-	struct scatterlist *sg;
-	int i;
+	struct sg_page_iter sg_iter;
 
 	BUG_ON(obj->userptr.work != NULL);
 
 	if (obj->madv != I915_MADV_WILLNEED)
 		obj->dirty = 0;
 
-	for_each_sg(obj->pages->sgl, sg, obj->pages->nents, i) {
-		struct page *page = sg_page(sg);
+	for_each_sg_page(obj->pages->sgl, &sg_iter, obj->pages->nents, 0) {
+		struct page *page = sg_page_iter_page(&sg_iter);
 
 		if (obj->dirty)
 			set_page_dirty(page);

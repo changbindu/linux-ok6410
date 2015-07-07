@@ -757,7 +757,7 @@ static void emac_shutdown(struct net_device *dev)
 	/* Disable all interrupt */
 	writel(0, db->membase + EMAC_INT_CTL_REG);
 
-	/* clear interupt status */
+	/* clear interrupt status */
 	reg_val = readl(db->membase + EMAC_INT_STA_REG);
 	writel(reg_val, db->membase + EMAC_INT_STA_REG);
 
@@ -850,8 +850,10 @@ static int emac_probe(struct platform_device *pdev)
 	}
 
 	db->clk = devm_clk_get(&pdev->dev, NULL);
-	if (IS_ERR(db->clk))
+	if (IS_ERR(db->clk)) {
+		ret = PTR_ERR(db->clk);
 		goto out;
+	}
 
 	clk_prepare_enable(db->clk);
 
@@ -877,8 +879,6 @@ static int emac_probe(struct platform_device *pdev)
 	db->emacrx_completed_flag = 1;
 	emac_powerup(ndev);
 	emac_reset(db);
-
-	ether_setup(ndev);
 
 	ndev->netdev_ops = &emac_netdev_ops;
 	ndev->watchdog_timeo = msecs_to_jiffies(watchdog);

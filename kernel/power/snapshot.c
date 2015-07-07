@@ -28,6 +28,7 @@
 #include <linux/list.h>
 #include <linux/slab.h>
 #include <linux/compiler.h>
+#include <linux/ktime.h>
 
 #include <asm/uaccess.h>
 #include <asm/mmu_context.h>
@@ -725,6 +726,14 @@ static void memory_bm_clear_bit(struct memory_bitmap *bm, unsigned long pfn)
 	clear_bit(bit, addr);
 }
 
+static void memory_bm_clear_current(struct memory_bitmap *bm)
+{
+	int bit;
+
+	bit = max(bm->cur.node_bit - 1, 0);
+	clear_bit(bit, bm->cur.node->data);
+}
+
 static int memory_bm_test_bit(struct memory_bitmap *bm, unsigned long pfn)
 {
 	void *addr;
@@ -944,25 +953,6 @@ static void mark_nosave_pages(struct memory_bitmap *bm)
 				mem_bm_set_bit_check(bm, pfn);
 			}
 	}
-}
-
-static bool is_nosave_page(unsigned long pfn)
-{
-	struct nosave_region *region;
-
-	list_for_each_entry(region, &nosave_regions, list) {
-		if (pfn >= region->start_pfn && pfn < region->end_pfn) {
-			pr_err("PM: %#010llx in e820 nosave region: "
-			       "[mem %#010llx-%#010llx]\n",
-			       (unsigned long long) pfn << PAGE_SHIFT,
-			       (unsigned long long) region->start_pfn << PAGE_SHIFT,
-			       ((unsigned long long) region->end_pfn << PAGE_SHIFT)
-					- 1);
-			return true;
-		}
-	}
-
-	return false;
 }
 
 /**
@@ -1333,23 +1323,39 @@ static struct memory_bitmap copy_bm;
 
 void swsusp_free(void)
 {
-	struct zone *zone;
-	unsigned long pfn, max_zone_pfn;
+	unsigned long fb_pfn, fr_pfn;
 
-	for_each_populated_zone(zone) {
-		max_zone_pfn = zone_end_pfn(zone);
-		for (pfn = zone->zone_start_pfn; pfn < max_zone_pfn; pfn++)
-			if (pfn_valid(pfn)) {
-				struct page *page = pfn_to_page(pfn);
+	if (!forbidden_pages_map || !free_pages_map)
+		goto out;
 
-				if (swsusp_page_is_forbidden(page) &&
-				    swsusp_page_is_free(page)) {
-					swsusp_unset_page_forbidden(page);
-					swsusp_unset_page_free(page);
-					__free_page(page);
-				}
-			}
+	memory_bm_position_reset(forbidden_pages_map);
+	memory_bm_position_reset(free_pages_map);
+
+loop:
+	fr_pfn = memory_bm_next_pfn(free_pages_map);
+	fb_pfn = memory_bm_next_pfn(forbidden_pages_map);
+
+	/*
+	 * Find the next bit set in both bitmaps. This is guaranteed to
+	 * terminate when fb_pfn == fr_pfn == BM_END_OF_MAP.
+	 */
+	do {
+		if (fb_pfn < fr_pfn)
+			fb_pfn = memory_bm_next_pfn(forbidden_pages_map);
+		if (fr_pfn < fb_pfn)
+			fr_pfn = memory_bm_next_pfn(free_pages_map);
+	} while (fb_pfn != fr_pfn);
+
+	if (fr_pfn != BM_END_OF_MAP && pfn_valid(fr_pfn)) {
+		struct page *page = pfn_to_page(fr_pfn);
+
+		memory_bm_clear_current(forbidden_pages_map);
+		memory_bm_clear_current(free_pages_map);
+		__free_page(page);
+		goto loop;
 	}
+
+out:
 	nr_copy_pages = 0;
 	nr_meta_pages = 0;
 	restore_pblist = NULL;
@@ -1447,9 +1453,9 @@ static inline unsigned long preallocate_highmem_fraction(unsigned long nr_pages,
 /**
  * free_unnecessary_pages - Release preallocated pages not needed for the image
  */
-static void free_unnecessary_pages(void)
+static unsigned long free_unnecessary_pages(void)
 {
-	unsigned long save, to_free_normal, to_free_highmem;
+	unsigned long save, to_free_normal, to_free_highmem, free;
 
 	save = count_data_pages();
 	if (alloc_normal >= save) {
@@ -1470,6 +1476,7 @@ static void free_unnecessary_pages(void)
 		else
 			to_free_normal = 0;
 	}
+	free = to_free_normal + to_free_highmem;
 
 	memory_bm_position_reset(&copy_bm);
 
@@ -1493,6 +1500,8 @@ static void free_unnecessary_pages(void)
 		swsusp_unset_page_free(page);
 		__free_page(page);
 	}
+
+	return free;
 }
 
 /**
@@ -1552,11 +1561,11 @@ int hibernate_preallocate_memory(void)
 	struct zone *zone;
 	unsigned long saveable, size, max_size, count, highmem, pages = 0;
 	unsigned long alloc, save_highmem, pages_highmem, avail_normal;
-	struct timeval start, stop;
+	ktime_t start, stop;
 	int error;
 
 	printk(KERN_INFO "PM: Preallocating image memory... ");
-	do_gettimeofday(&start);
+	start = ktime_get();
 
 	error = memory_bm_create(&orig_bm, GFP_IMAGE, PG_ANY);
 	if (error)
@@ -1682,12 +1691,12 @@ int hibernate_preallocate_memory(void)
 	 * pages in memory, but we have allocated more.  Release the excessive
 	 * ones now.
 	 */
-	free_unnecessary_pages();
+	pages -= free_unnecessary_pages();
 
  out:
-	do_gettimeofday(&stop);
+	stop = ktime_get();
 	printk(KERN_CONT "done (allocated %lu pages)\n", pages);
-	swsusp_show_speed(&start, &stop, pages, "Allocated");
+	swsusp_show_speed(start, stop, pages, "Allocated");
 
 	return 0;
 
@@ -2014,7 +2023,7 @@ static int mark_unsafe_pages(struct memory_bitmap *bm)
 	do {
 		pfn = memory_bm_next_pfn(bm);
 		if (likely(pfn != BM_END_OF_MAP)) {
-			if (likely(pfn_valid(pfn)) && !is_nosave_page(pfn))
+			if (likely(pfn_valid(pfn)))
 				swsusp_set_page_free(pfn_to_page(pfn));
 			else
 				return -EFAULT;
@@ -2285,8 +2294,6 @@ static inline void free_highmem_data(void)
 		free_image_page(buffer, PG_UNSAFE_CLEAR);
 }
 #else
-static inline int get_safe_write_buffer(void) { return 0; }
-
 static unsigned int
 count_highmem_image_pages(struct memory_bitmap *bm) { return 0; }
 

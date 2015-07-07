@@ -161,7 +161,7 @@ static struct palmas_clks_of_match_data palmas_of_clk32kgaudio = {
 	},
 };
 
-static struct of_device_id palmas_clks_of_match[] = {
+static const struct of_device_id palmas_clks_of_match[] = {
 	{
 		.compatible = "ti,palmas-clk32kg",
 		.data = &palmas_of_clk32kg,
@@ -292,7 +292,6 @@ static int palmas_clks_remove(struct platform_device *pdev)
 static struct platform_driver palmas_clks_driver = {
 	.driver = {
 		.name = "palmas-clk",
-		.owner = THIS_MODULE,
 		.of_match_table = palmas_clks_of_match,
 	},
 	.probe = palmas_clks_probe,

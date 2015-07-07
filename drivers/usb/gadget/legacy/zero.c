@@ -28,7 +28,7 @@
  *
  * Why is *this* driver using two configurations, rather than setting up
  * two interfaces with different functions?  To help verify that multiple
- * configuration infrastucture is working correctly; also, so that it can
+ * configuration infrastructure is working correctly; also, so that it can
  * work with low capability USB controllers without four bulk endpoints.
  */
 
@@ -272,7 +272,7 @@ static struct usb_function_instance *func_inst_lb;
 module_param_named(qlen, gzero_options.qlen, uint, S_IRUGO|S_IWUSR);
 MODULE_PARM_DESC(qlen, "depth of loopback queue");
 
-static int __init zero_bind(struct usb_composite_dev *cdev)
+static int zero_bind(struct usb_composite_dev *cdev)
 {
 	struct f_ss_opts	*ss_opts;
 	struct f_lb_opts	*lb_opts;
@@ -400,7 +400,7 @@ static int zero_unbind(struct usb_composite_dev *cdev)
 	return 0;
 }
 
-static __refdata struct usb_composite_driver zero_driver = {
+static struct usb_composite_driver zero_driver = {
 	.name		= "zero",
 	.dev		= &device_desc,
 	.strings	= dev_strings,

@@ -22,9 +22,11 @@
 #include <net/nfc/nci_core.h>
 
 #include "st21nfcb.h"
-#include "ndlc.h"
+#include "st21nfcb_se.h"
 
 #define DRIVER_DESC "NCI NFC driver for ST21NFCB"
+
+#define ST21NFCB_NCI1_X_PROPRIETARY_ISO15693 0x83
 
 static int st21nfcb_nci_open(struct nci_dev *ndev)
 {
@@ -65,10 +67,25 @@ static int st21nfcb_nci_send(struct nci_dev *ndev, struct sk_buff *skb)
 	return ndlc_send(info->ndlc, skb);
 }
 
+static __u32 st21nfcb_nci_get_rfprotocol(struct nci_dev *ndev,
+					 __u8 rf_protocol)
+{
+	return rf_protocol == ST21NFCB_NCI1_X_PROPRIETARY_ISO15693 ?
+		NFC_PROTO_ISO15693_MASK : 0;
+}
+
 static struct nci_ops st21nfcb_nci_ops = {
 	.open = st21nfcb_nci_open,
 	.close = st21nfcb_nci_close,
 	.send = st21nfcb_nci_send,
+	.get_rfprotocol = st21nfcb_nci_get_rfprotocol,
+	.discover_se = st21nfcb_nci_discover_se,
+	.enable_se = st21nfcb_nci_enable_se,
+	.disable_se = st21nfcb_nci_disable_se,
+	.se_io = st21nfcb_nci_se_io,
+	.hci_load_session = st21nfcb_hci_load_session,
+	.hci_event_received = st21nfcb_hci_event_received,
+	.hci_cmd_received = st21nfcb_hci_cmd_received,
 };
 
 int st21nfcb_nci_probe(struct llt_ndlc *ndlc, int phy_headroom,
@@ -88,30 +105,27 @@ int st21nfcb_nci_probe(struct llt_ndlc *ndlc, int phy_headroom,
 		| NFC_PROTO_FELICA_MASK
 		| NFC_PROTO_ISO14443_MASK
 		| NFC_PROTO_ISO14443_B_MASK
+		| NFC_PROTO_ISO15693_MASK
 		| NFC_PROTO_NFC_DEP_MASK;
 
 	ndlc->ndev = nci_allocate_device(&st21nfcb_nci_ops, protocols,
 					phy_headroom, phy_tailroom);
 	if (!ndlc->ndev) {
 		pr_err("Cannot allocate nfc ndev\n");
-		r = -ENOMEM;
-		goto err_alloc_ndev;
+		return -ENOMEM;
 	}
 	info->ndlc = ndlc;
 
 	nci_set_drvdata(ndlc->ndev, info);
 
 	r = nci_register_device(ndlc->ndev);
-	if (r)
-		goto err_regdev;
+	if (r) {
+		pr_err("Cannot register nfc device to nci core\n");
+		nci_free_device(ndlc->ndev);
+		return r;
+	}
 
-	return r;
-err_regdev:
-	nci_free_device(ndlc->ndev);
-
-err_alloc_ndev:
-	kfree(info);
-	return r;
+	return st21nfcb_se_init(ndlc->ndev);
 }
 EXPORT_SYMBOL_GPL(st21nfcb_nci_probe);
 

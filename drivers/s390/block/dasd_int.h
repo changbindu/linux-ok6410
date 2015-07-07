@@ -357,6 +357,7 @@ struct dasd_discipline {
 
 	int (*get_uid) (struct dasd_device *, struct dasd_uid *);
 	void (*kick_validate) (struct dasd_device *);
+	int (*check_attention)(struct dasd_device *, __u8);
 };
 
 extern struct dasd_discipline *dasd_diag_discipline_pointer;
@@ -382,6 +383,10 @@ struct dasd_path {
 	__u8 tbvpm;
 	__u8 ppm;
 	__u8 npm;
+	/* paths that are not used because of a special condition */
+	__u8 cablepm; /* miss-cabled */
+	__u8 hpfpm;   /* the HPF requirements of the other paths are not met */
+	__u8 cuirpm;  /* CUIR varied offline */
 };
 
 struct dasd_profile_info {
@@ -501,7 +506,10 @@ struct dasd_block {
 	struct dasd_profile profile;
 };
 
-
+struct dasd_attention_data {
+	struct dasd_device *device;
+	__u8 lpum;
+};
 
 /* reasons why device (ccw_device_start) was stopped */
 #define DASD_STOPPED_NOT_ACC 1         /* not accessible */
@@ -643,7 +651,7 @@ dasd_check_blocksize(int bsize)
 #define DASD_PROFILE_GLOBAL_ONLY 2
 
 extern debug_info_t *dasd_debug_area;
-extern struct dasd_profile_info dasd_global_profile_data;
+extern struct dasd_profile dasd_global_profile;
 extern unsigned int dasd_global_profile_level;
 extern const struct block_device_operations dasd_device_operations;
 
@@ -720,7 +728,6 @@ int dasd_device_is_ro(struct dasd_device *);
 void dasd_profile_reset(struct dasd_profile *);
 int dasd_profile_on(struct dasd_profile *);
 void dasd_profile_off(struct dasd_profile *);
-void dasd_global_profile_reset(void);
 char *dasd_get_user_string(const char __user *, size_t);
 
 /* externals in dasd_devmap.c */

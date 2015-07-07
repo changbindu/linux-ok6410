@@ -20,6 +20,7 @@
 #include <asm/time.h>
 #include <asm/machdep.h>
 #include <asm/pci-bridge.h>
+#include <asm/pgtable.h>
 #include <asm/ppc-pci.h>
 #include <mm/mmu_decl.h>
 #include <asm/prom.h>
@@ -67,6 +68,16 @@ void __init corenet_gen_setup_arch(void)
 
 	swiotlb_detect_4g();
 
+#if defined(CONFIG_FSL_PCI) && defined(CONFIG_ZONE_DMA32)
+	/*
+	 * Inbound windows don't cover the full lower 4 GiB
+	 * due to conflicts with PCICSRBAR and outbound windows,
+	 * so limit the DMA32 zone to 2 GiB, to allow consistent
+	 * allocations to succeed.
+	 */
+	limit_zone_pfn(ZONE_DMA32, 1UL << (31 - PAGE_SHIFT));
+#endif
+
 	pr_info("%s board\n", ppc_md.name);
 
 	mpc85xx_qe_init();
@@ -75,6 +86,15 @@ void __init corenet_gen_setup_arch(void)
 static const struct of_device_id of_device_ids[] = {
 	{
 		.compatible	= "simple-bus"
+	},
+	{
+		.compatible	= "mdio-mux-gpio"
+	},
+	{
+		.compatible	= "fsl,fpga-ngpixis"
+	},
+	{
+		.compatible	= "fsl,fpga-qixis"
 	},
 	{
 		.compatible	= "fsl,srio",
@@ -96,6 +116,9 @@ static const struct of_device_id of_device_ids[] = {
 	},
 	{
 		.compatible	= "fsl,qe",
+	},
+	{
+		.compatible    = "fsl,fman",
 	},
 	/* The following two are for the Freescale hypervisor */
 	{
@@ -129,6 +152,9 @@ static const char * const boards[] __initconst = {
 	"fsl,B4220QDS",
 	"fsl,T1040QDS",
 	"fsl,T1042QDS",
+	"fsl,T1040RDB",
+	"fsl,T1042RDB",
+	"fsl,T1042RDB_PI",
 	"keymile,kmcoge4",
 	NULL
 };
@@ -156,7 +182,7 @@ static int __init corenet_generic_probe(void)
 
 			ppc_md.get_irq = ehv_pic_get_irq;
 			ppc_md.restart = fsl_hv_restart;
-			ppc_md.power_off = fsl_hv_halt;
+			pm_power_off = fsl_hv_halt;
 			ppc_md.halt = fsl_hv_halt;
 #ifdef CONFIG_SMP
 			/*

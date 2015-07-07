@@ -23,8 +23,6 @@
 #include "xfs_log_format.h"
 #include "xfs_trans_resv.h"
 #include "xfs_bit.h"
-#include "xfs_sb.h"
-#include "xfs_ag.h"
 #include "xfs_mount.h"
 #include "xfs_da_format.h"
 #include "xfs_inode.h"
@@ -42,7 +40,6 @@
 #include "xfs_trace.h"
 #include "xfs_icache.h"
 #include "xfs_log.h"
-#include "xfs_dinode.h"
 
 /* Kernel only BMAP related definitions and functions */
 
@@ -1122,14 +1119,6 @@ xfs_zero_remaining_bytes(
 	if (endoff > XFS_ISIZE(ip))
 		endoff = XFS_ISIZE(ip);
 
-	bp = xfs_buf_get_uncached(XFS_IS_REALTIME_INODE(ip) ?
-					mp->m_rtdev_targp : mp->m_ddev_targp,
-				  BTOBB(mp->m_sb.sb_blocksize), 0);
-	if (!bp)
-		return -ENOMEM;
-
-	xfs_buf_unlock(bp);
-
 	for (offset = startoff; offset <= endoff; offset = lastoffset + 1) {
 		uint lock_mode;
 
@@ -1152,42 +1141,24 @@ xfs_zero_remaining_bytes(
 		ASSERT(imap.br_startblock != DELAYSTARTBLOCK);
 		if (imap.br_state == XFS_EXT_UNWRITTEN)
 			continue;
-		XFS_BUF_UNDONE(bp);
-		XFS_BUF_UNWRITE(bp);
-		XFS_BUF_READ(bp);
-		XFS_BUF_SET_ADDR(bp, xfs_fsb_to_db(ip, imap.br_startblock));
 
-		if (XFS_FORCED_SHUTDOWN(mp)) {
-			error = -EIO;
-			break;
-		}
-		xfs_buf_iorequest(bp);
-		error = xfs_buf_iowait(bp);
-		if (error) {
-			xfs_buf_ioerror_alert(bp,
-					"xfs_zero_remaining_bytes(read)");
-			break;
-		}
+		error = xfs_buf_read_uncached(XFS_IS_REALTIME_INODE(ip) ?
+				mp->m_rtdev_targp : mp->m_ddev_targp,
+				xfs_fsb_to_db(ip, imap.br_startblock),
+				BTOBB(mp->m_sb.sb_blocksize),
+				0, &bp, NULL);
+		if (error)
+			return error;
+
 		memset(bp->b_addr +
-			(offset - XFS_FSB_TO_B(mp, imap.br_startoff)),
-		      0, lastoffset - offset + 1);
-		XFS_BUF_UNDONE(bp);
-		XFS_BUF_UNREAD(bp);
-		XFS_BUF_WRITE(bp);
+				(offset - XFS_FSB_TO_B(mp, imap.br_startoff)),
+		       0, lastoffset - offset + 1);
 
-		if (XFS_FORCED_SHUTDOWN(mp)) {
-			error = -EIO;
-			break;
-		}
-		xfs_buf_iorequest(bp);
-		error = xfs_buf_iowait(bp);
-		if (error) {
-			xfs_buf_ioerror_alert(bp,
-					"xfs_zero_remaining_bytes(write)");
-			break;
-		}
+		error = xfs_bwrite(bp);
+		xfs_buf_relse(bp);
+		if (error)
+			return error;
 	}
-	xfs_buf_free(bp);
 	return error;
 }
 
@@ -1205,6 +1176,7 @@ xfs_free_file_space(
 	xfs_bmap_free_t		free_list;
 	xfs_bmbt_irec_t		imap;
 	xfs_off_t		ioffset;
+	xfs_off_t		iendoffset;
 	xfs_extlen_t		mod=0;
 	xfs_mount_t		*mp;
 	int			nimap;
@@ -1233,12 +1205,13 @@ xfs_free_file_space(
 	inode_dio_wait(VFS_I(ip));
 
 	rounding = max_t(xfs_off_t, 1 << mp->m_sb.sb_blocklog, PAGE_CACHE_SIZE);
-	ioffset = offset & ~(rounding - 1);
-	error = filemap_write_and_wait_range(VFS_I(ip)->i_mapping,
-					      ioffset, -1);
+	ioffset = round_down(offset, rounding);
+	iendoffset = round_up(offset + len, rounding) - 1;
+	error = filemap_write_and_wait_range(VFS_I(ip)->i_mapping, ioffset,
+					     iendoffset);
 	if (error)
 		goto out;
-	truncate_pagecache_range(VFS_I(ip), ioffset, -1);
+	truncate_pagecache_range(VFS_I(ip), ioffset, iendoffset);
 
 	/*
 	 * Need to zero the stuff we're not freeing, on disk.
@@ -1362,7 +1335,10 @@ xfs_free_file_space(
 	goto out;
 }
 
-
+/*
+ * Preallocate and zero a range of a file. This mechanism has the allocation
+ * semantics of fallocate and in addition converts data in the range to zeroes.
+ */
 int
 xfs_zero_file_space(
 	struct xfs_inode	*ip,
@@ -1370,129 +1346,110 @@ xfs_zero_file_space(
 	xfs_off_t		len)
 {
 	struct xfs_mount	*mp = ip->i_mount;
-	uint			granularity;
-	xfs_off_t		start_boundary;
-	xfs_off_t		end_boundary;
+	uint			blksize;
 	int			error;
 
 	trace_xfs_zero_file_space(ip);
 
-	granularity = max_t(uint, 1 << mp->m_sb.sb_blocklog, PAGE_CACHE_SIZE);
+	blksize = 1 << mp->m_sb.sb_blocklog;
 
 	/*
-	 * Round the range of extents we are going to convert inwards.  If the
-	 * offset is aligned, then it doesn't get changed so we zero from the
-	 * start of the block offset points to.
+	 * Punch a hole and prealloc the range. We use hole punch rather than
+	 * unwritten extent conversion for two reasons:
+	 *
+	 * 1.) Hole punch handles partial block zeroing for us.
+	 *
+	 * 2.) If prealloc returns ENOSPC, the file range is still zero-valued
+	 * by virtue of the hole punch.
 	 */
-	start_boundary = round_up(offset, granularity);
-	end_boundary = round_down(offset + len, granularity);
+	error = xfs_free_file_space(ip, offset, len);
+	if (error)
+		goto out;
 
-	ASSERT(start_boundary >= offset);
-	ASSERT(end_boundary <= offset + len);
-
-	if (start_boundary < end_boundary - 1) {
-		/*
-		 * punch out delayed allocation blocks and the page cache over
-		 * the conversion range
-		 */
-		xfs_ilock(ip, XFS_ILOCK_EXCL);
-		error = xfs_bmap_punch_delalloc_range(ip,
-				XFS_B_TO_FSBT(mp, start_boundary),
-				XFS_B_TO_FSB(mp, end_boundary - start_boundary));
-		xfs_iunlock(ip, XFS_ILOCK_EXCL);
-		truncate_pagecache_range(VFS_I(ip), start_boundary,
-					 end_boundary - 1);
-
-		/* convert the blocks */
-		error = xfs_alloc_file_space(ip, start_boundary,
-					end_boundary - start_boundary - 1,
-					XFS_BMAPI_PREALLOC | XFS_BMAPI_CONVERT);
-		if (error)
-			goto out;
-
-		/* We've handled the interior of the range, now for the edges */
-		if (start_boundary != offset) {
-			error = xfs_iozero(ip, offset, start_boundary - offset);
-			if (error)
-				goto out;
-		}
-
-		if (end_boundary != offset + len)
-			error = xfs_iozero(ip, end_boundary,
-					   offset + len - end_boundary);
-
-	} else {
-		/*
-		 * It's either a sub-granularity range or the range spanned lies
-		 * partially across two adjacent blocks.
-		 */
-		error = xfs_iozero(ip, offset, len);
-	}
-
+	error = xfs_alloc_file_space(ip, round_down(offset, blksize),
+				     round_up(offset + len, blksize) -
+				     round_down(offset, blksize),
+				     XFS_BMAPI_PREALLOC);
 out:
 	return error;
 
 }
 
 /*
- * xfs_collapse_file_space()
- *	This routine frees disk space and shift extent for the given file.
- *	The first thing we do is to free data blocks in the specified range
- *	by calling xfs_free_file_space(). It would also sync dirty data
- *	and invalidate page cache over the region on which collapse range
- *	is working. And Shift extent records to the left to cover a hole.
- * RETURNS:
- *	0 on success
- *	errno on error
- *
+ * @next_fsb will keep track of the extent currently undergoing shift.
+ * @stop_fsb will keep track of the extent at which we have to stop.
+ * If we are shifting left, we will start with block (offset + len) and
+ * shift each extent till last extent.
+ * If we are shifting right, we will start with last extent inside file space
+ * and continue until we reach the block corresponding to offset.
  */
-int
-xfs_collapse_file_space(
-	struct xfs_inode	*ip,
-	xfs_off_t		offset,
-	xfs_off_t		len)
+static int
+xfs_shift_file_space(
+	struct xfs_inode        *ip,
+	xfs_off_t               offset,
+	xfs_off_t               len,
+	enum shift_direction	direction)
 {
 	int			done = 0;
 	struct xfs_mount	*mp = ip->i_mount;
 	struct xfs_trans	*tp;
 	int			error;
-	xfs_extnum_t		current_ext = 0;
 	struct xfs_bmap_free	free_list;
 	xfs_fsblock_t		first_block;
 	int			committed;
-	xfs_fileoff_t		start_fsb;
+	xfs_fileoff_t		stop_fsb;
+	xfs_fileoff_t		next_fsb;
 	xfs_fileoff_t		shift_fsb;
 
-	ASSERT(xfs_isilocked(ip, XFS_IOLOCK_EXCL));
+	ASSERT(direction == SHIFT_LEFT || direction == SHIFT_RIGHT);
 
-	trace_xfs_collapse_file_space(ip);
+	if (direction == SHIFT_LEFT) {
+		next_fsb = XFS_B_TO_FSB(mp, offset + len);
+		stop_fsb = XFS_B_TO_FSB(mp, VFS_I(ip)->i_size);
+	} else {
+		/*
+		 * If right shift, delegate the work of initialization of
+		 * next_fsb to xfs_bmap_shift_extent as it has ilock held.
+		 */
+		next_fsb = NULLFSBLOCK;
+		stop_fsb = XFS_B_TO_FSB(mp, offset);
+	}
 
-	start_fsb = XFS_B_TO_FSB(mp, offset + len);
 	shift_fsb = XFS_B_TO_FSB(mp, len);
 
 	/*
-	 * Writeback the entire file and force remove any post-eof blocks. The
-	 * writeback prevents changes to the extent list via concurrent
-	 * writeback and the eofblocks trim prevents the extent shift algorithm
-	 * from running into a post-eof delalloc extent.
-	 *
-	 * XXX: This is a temporary fix until the extent shift loop below is
-	 * converted to use offsets and lookups within the ILOCK rather than
-	 * carrying around the index into the extent list for the next
-	 * iteration.
+	 * Trim eofblocks to avoid shifting uninitialized post-eof preallocation
+	 * into the accessible region of the file.
 	 */
-	error = filemap_write_and_wait(VFS_I(ip)->i_mapping);
-	if (error)
-		return error;
 	if (xfs_can_free_eofblocks(ip, true)) {
 		error = xfs_free_eofblocks(mp, ip, false);
 		if (error)
 			return error;
 	}
 
-	error = xfs_free_file_space(ip, offset, len);
+	/*
+	 * Writeback and invalidate cache for the remainder of the file as we're
+	 * about to shift down every extent from offset to EOF.
+	 */
+	error = filemap_write_and_wait_range(VFS_I(ip)->i_mapping,
+					     offset, -1);
 	if (error)
 		return error;
+	error = invalidate_inode_pages2_range(VFS_I(ip)->i_mapping,
+					offset >> PAGE_CACHE_SHIFT, -1);
+	if (error)
+		return error;
+
+	/*
+	 * The extent shiting code works on extent granularity. So, if
+	 * stop_fsb is not the starting block of extent, we need to split
+	 * the extent at stop_fsb.
+	 */
+	if (direction == SHIFT_RIGHT) {
+		error = xfs_bmap_split_extent(ip, stop_fsb);
+		if (error)
+			return error;
+	}
 
 	while (!error && !done) {
 		tp = xfs_trans_alloc(mp, XFS_TRANS_DIOSTRAT);
@@ -1517,7 +1474,7 @@ xfs_collapse_file_space(
 		if (error)
 			goto out;
 
-		xfs_trans_ijoin(tp, ip, 0);
+		xfs_trans_ijoin(tp, ip, XFS_ILOCK_EXCL);
 
 		xfs_bmap_init(&free_list, &first_block);
 
@@ -1525,10 +1482,9 @@ xfs_collapse_file_space(
 		 * We are using the write transaction in which max 2 bmbt
 		 * updates are allowed
 		 */
-		error = xfs_bmap_shift_extents(tp, ip, &done, start_fsb,
-					       shift_fsb, &current_ext,
-					       &first_block, &free_list,
-					       XFS_BMAP_MAX_SHIFT_EXTENTS);
+		error = xfs_bmap_shift_extents(tp, ip, &next_fsb, shift_fsb,
+				&done, stop_fsb, &first_block, &free_list,
+				direction, XFS_BMAP_MAX_SHIFT_EXTENTS);
 		if (error)
 			goto out;
 
@@ -1537,15 +1493,67 @@ xfs_collapse_file_space(
 			goto out;
 
 		error = xfs_trans_commit(tp, XFS_TRANS_RELEASE_LOG_RES);
-		xfs_iunlock(ip, XFS_ILOCK_EXCL);
 	}
 
 	return error;
 
 out:
 	xfs_trans_cancel(tp, XFS_TRANS_RELEASE_LOG_RES | XFS_TRANS_ABORT);
-	xfs_iunlock(ip, XFS_ILOCK_EXCL);
 	return error;
+}
+
+/*
+ * xfs_collapse_file_space()
+ *	This routine frees disk space and shift extent for the given file.
+ *	The first thing we do is to free data blocks in the specified range
+ *	by calling xfs_free_file_space(). It would also sync dirty data
+ *	and invalidate page cache over the region on which collapse range
+ *	is working. And Shift extent records to the left to cover a hole.
+ * RETURNS:
+ *	0 on success
+ *	errno on error
+ *
+ */
+int
+xfs_collapse_file_space(
+	struct xfs_inode	*ip,
+	xfs_off_t		offset,
+	xfs_off_t		len)
+{
+	int error;
+
+	ASSERT(xfs_isilocked(ip, XFS_IOLOCK_EXCL));
+	trace_xfs_collapse_file_space(ip);
+
+	error = xfs_free_file_space(ip, offset, len);
+	if (error)
+		return error;
+
+	return xfs_shift_file_space(ip, offset, len, SHIFT_LEFT);
+}
+
+/*
+ * xfs_insert_file_space()
+ *	This routine create hole space by shifting extents for the given file.
+ *	The first thing we do is to sync dirty data and invalidate page cache
+ *	over the region on which insert range is working. And split an extent
+ *	to two extents at given offset by calling xfs_bmap_split_extent.
+ *	And shift all extent records which are laying between [offset,
+ *	last allocated extent] to the right to reserve hole range.
+ * RETURNS:
+ *	0 on success
+ *	errno on error
+ */
+int
+xfs_insert_file_space(
+	struct xfs_inode	*ip,
+	loff_t			offset,
+	loff_t			len)
+{
+	ASSERT(xfs_isilocked(ip, XFS_IOLOCK_EXCL));
+	trace_xfs_insert_file_space(ip);
+
+	return xfs_shift_file_space(ip, offset, len, SHIFT_RIGHT);
 }
 
 /*
@@ -1638,7 +1646,7 @@ xfs_swap_extents_check_format(
 	return 0;
 }
 
-int
+static int
 xfs_swap_extent_flush(
 	struct xfs_inode	*ip)
 {
@@ -1652,13 +1660,6 @@ xfs_swap_extent_flush(
 	/* Verify O_DIRECT for ftmp */
 	if (VFS_I(ip)->i_mapping->nrpages)
 		return -EINVAL;
-
-	/*
-	 * Don't try to swap extents on mmap()d files because we can't lock
-	 * out races against page faults safely.
-	 */
-	if (mapping_mapped(VFS_I(ip)->i_mapping))
-		return -EBUSY;
 	return 0;
 }
 
@@ -1686,13 +1687,14 @@ xfs_swap_extents(
 	}
 
 	/*
-	 * Lock up the inodes against other IO and truncate to begin with.
-	 * Then we can ensure the inodes are flushed and have no page cache
-	 * safely. Once we have done this we can take the ilocks and do the rest
-	 * of the checks.
+	 * Lock the inodes against other IO, page faults and truncate to
+	 * begin with.  Then we can ensure the inodes are flushed and have no
+	 * page cache safely. Once we have done this we can take the ilocks and
+	 * do the rest of the checks.
 	 */
-	lock_flags = XFS_IOLOCK_EXCL;
+	lock_flags = XFS_IOLOCK_EXCL | XFS_MMAPLOCK_EXCL;
 	xfs_lock_two_inodes(ip, tip, XFS_IOLOCK_EXCL);
+	xfs_lock_two_inodes(ip, tip, XFS_MMAPLOCK_EXCL);
 
 	/* Verify that both files have the same format */
 	if ((ip->i_d.di_mode & S_IFMT) != (tip->i_d.di_mode & S_IFMT)) {
@@ -1719,8 +1721,16 @@ xfs_swap_extents(
 		xfs_trans_cancel(tp, 0);
 		goto out_unlock;
 	}
+
+	/*
+	 * Lock and join the inodes to the tansaction so that transaction commit
+	 * or cancel will unlock the inodes from this point onwards.
+	 */
 	xfs_lock_two_inodes(ip, tip, XFS_ILOCK_EXCL);
 	lock_flags |= XFS_ILOCK_EXCL;
+	xfs_trans_ijoin(tp, ip, lock_flags);
+	xfs_trans_ijoin(tp, tip, lock_flags);
+
 
 	/* Verify all data are being swapped */
 	if (sxp->sx_offset != 0 ||
@@ -1772,9 +1782,6 @@ xfs_swap_extents(
 		if (error)
 			goto out_trans_cancel;
 	}
-
-	xfs_trans_ijoin(tp, ip, lock_flags);
-	xfs_trans_ijoin(tp, tip, lock_flags);
 
 	/*
 	 * Before we've swapped the forks, lets set the owners of the forks
@@ -1909,5 +1916,5 @@ out_unlock:
 
 out_trans_cancel:
 	xfs_trans_cancel(tp, 0);
-	goto out_unlock;
+	goto out;
 }

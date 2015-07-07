@@ -36,7 +36,6 @@ struct nouveau_fbdev {
 	struct nouveau_framebuffer nouveau_fb;
 	struct list_head fbdev_list;
 	struct drm_device *dev;
-	struct work_struct work;
 	unsigned int saved_flags;
 	struct nvif_object surf2d;
 	struct nvif_object clip;
@@ -73,5 +72,8 @@ void nouveau_fbcon_accel_save_disable(struct drm_device *dev);
 void nouveau_fbcon_accel_restore(struct drm_device *dev);
 
 void nouveau_fbcon_output_poll_changed(struct drm_device *dev);
+
+extern int nouveau_nofbaccel;
+
 #endif /* __NV50_FBCON_H__ */
 

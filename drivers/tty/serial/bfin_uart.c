@@ -108,22 +108,23 @@ static void bfin_serial_set_mctrl(struct uart_port *port, unsigned int mctrl)
 static irqreturn_t bfin_serial_mctrl_cts_int(int irq, void *dev_id)
 {
 	struct bfin_serial_port *uart = dev_id;
-	unsigned int status = bfin_serial_get_mctrl(&uart->port);
+	struct uart_port *uport = &uart->port;
+	unsigned int status = bfin_serial_get_mctrl(uport);
 #ifdef CONFIG_SERIAL_BFIN_HARD_CTSRTS
-	struct tty_struct *tty = uart->port.state->port.tty;
 
 	UART_CLEAR_SCTS(uart);
-	if (tty->hw_stopped) {
+	if (uport->hw_stopped) {
 		if (status) {
-			tty->hw_stopped = 0;
-			uart_write_wakeup(&uart->port);
+			uport->hw_stopped = 0;
+			uart_write_wakeup(uport);
 		}
 	} else {
 		if (!status)
-			tty->hw_stopped = 1;
+			uport->hw_stopped = 1;
 	}
+#else
+	uart_handle_cts_change(uport, status & TIOCM_CTS);
 #endif
-	uart_handle_cts_change(&uart->port, status & TIOCM_CTS);
 
 	return IRQ_HANDLED;
 }
@@ -463,6 +464,7 @@ void bfin_serial_rx_dma_timeout(struct bfin_serial_port *uart)
 	int x_pos, pos;
 	unsigned long flags;
 
+	dma_disable_irq_nosync(uart->rx_dma_channel);
 	spin_lock_irqsave(&uart->rx_lock, flags);
 
 	/* 2D DMA RX buffer ring is used. Because curr_y_count and
@@ -495,6 +497,7 @@ void bfin_serial_rx_dma_timeout(struct bfin_serial_port *uart)
 	}
 
 	spin_unlock_irqrestore(&uart->rx_lock, flags);
+	dma_enable_irq(uart->rx_dma_channel);
 
 	mod_timer(&(uart->rx_dma_timer), jiffies + DMA_RX_FLUSH_JIFFIES);
 }
@@ -943,12 +946,13 @@ bfin_serial_verify_port(struct uart_port *port, struct serial_struct *ser)
  * Enable the IrDA function if tty->ldisc.num is N_IRDA.
  * In other cases, disable IrDA function.
  */
-static void bfin_serial_set_ldisc(struct uart_port *port, int ld)
+static void bfin_serial_set_ldisc(struct uart_port *port,
+				  struct ktermios *termios)
 {
 	struct bfin_serial_port *uart = (struct bfin_serial_port *)port;
 	unsigned int val;
 
-	switch (ld) {
+	switch (termios->c_line) {
 	case N_IRDA:
 		val = UART_GET_GCTL(uart);
 		val |= (UMOD_IRDA | RPOLC);
@@ -1385,7 +1389,6 @@ static struct platform_driver bfin_serial_driver = {
 	.resume		= bfin_serial_resume,
 	.driver		= {
 		.name	= DRIVER_NAME,
-		.owner	= THIS_MODULE,
 	},
 };
 

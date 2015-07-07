@@ -25,30 +25,38 @@
 /* Bluetooth HCI connection handling. */
 
 #include <linux/export.h>
+#include <linux/debugfs.h>
 
 #include <net/bluetooth/bluetooth.h>
 #include <net/bluetooth/hci_core.h>
 #include <net/bluetooth/l2cap.h>
 
+#include "hci_request.h"
 #include "smp.h"
 #include "a2mp.h"
 
 struct sco_param {
 	u16 pkt_type;
 	u16 max_latency;
+	u8  retrans_effort;
+};
+
+static const struct sco_param esco_param_cvsd[] = {
+	{ EDR_ESCO_MASK & ~ESCO_2EV3, 0x000a,	0x01 }, /* S3 */
+	{ EDR_ESCO_MASK & ~ESCO_2EV3, 0x0007,	0x01 }, /* S2 */
+	{ EDR_ESCO_MASK | ESCO_EV3,   0x0007,	0x01 }, /* S1 */
+	{ EDR_ESCO_MASK | ESCO_HV3,   0xffff,	0x01 }, /* D1 */
+	{ EDR_ESCO_MASK | ESCO_HV1,   0xffff,	0x01 }, /* D0 */
 };
 
 static const struct sco_param sco_param_cvsd[] = {
-	{ EDR_ESCO_MASK & ~ESCO_2EV3, 0x000a }, /* S3 */
-	{ EDR_ESCO_MASK & ~ESCO_2EV3, 0x0007 }, /* S2 */
-	{ EDR_ESCO_MASK | ESCO_EV3,   0x0007 }, /* S1 */
-	{ EDR_ESCO_MASK | ESCO_HV3,   0xffff }, /* D1 */
-	{ EDR_ESCO_MASK | ESCO_HV1,   0xffff }, /* D0 */
+	{ EDR_ESCO_MASK | ESCO_HV3,   0xffff,	0xff }, /* D1 */
+	{ EDR_ESCO_MASK | ESCO_HV1,   0xffff,	0xff }, /* D0 */
 };
 
-static const struct sco_param sco_param_wideband[] = {
-	{ EDR_ESCO_MASK & ~ESCO_2EV3, 0x000d }, /* T2 */
-	{ EDR_ESCO_MASK | ESCO_EV3,   0x0008 }, /* T1 */
+static const struct sco_param esco_param_msbc[] = {
+	{ EDR_ESCO_MASK & ~ESCO_2EV3, 0x000d,	0x02 }, /* T2 */
+	{ EDR_ESCO_MASK | ESCO_EV3,   0x0008,	0x02 }, /* T1 */
 };
 
 static void hci_le_create_connection_cancel(struct hci_conn *conn)
@@ -116,23 +124,37 @@ static void hci_reject_sco(struct hci_conn *conn)
 {
 	struct hci_cp_reject_sync_conn_req cp;
 
-	cp.reason = HCI_ERROR_REMOTE_USER_TERM;
+	cp.reason = HCI_ERROR_REJ_LIMITED_RESOURCES;
 	bacpy(&cp.bdaddr, &conn->dst);
 
 	hci_send_cmd(conn->hdev, HCI_OP_REJECT_SYNC_CONN_REQ, sizeof(cp), &cp);
 }
 
-void hci_disconnect(struct hci_conn *conn, __u8 reason)
+int hci_disconnect(struct hci_conn *conn, __u8 reason)
 {
 	struct hci_cp_disconnect cp;
 
 	BT_DBG("hcon %p", conn);
 
+	/* When we are master of an established connection and it enters
+	 * the disconnect timeout, then go ahead and try to read the
+	 * current clock offset.  Processing of the result is done
+	 * within the event handling and hci_clock_offset_evt function.
+	 */
+	if (conn->type == ACL_LINK && conn->role == HCI_ROLE_MASTER) {
+		struct hci_dev *hdev = conn->hdev;
+		struct hci_cp_read_clock_offset clkoff_cp;
+
+		clkoff_cp.handle = cpu_to_le16(conn->handle);
+		hci_send_cmd(hdev, HCI_OP_READ_CLOCK_OFFSET, sizeof(clkoff_cp),
+			     &clkoff_cp);
+	}
+
 	conn->state = BT_DISCONN;
 
 	cp.handle = cpu_to_le16(conn->handle);
 	cp.reason = reason;
-	hci_send_cmd(conn->hdev, HCI_OP_DISCONNECT, sizeof(cp), &cp);
+	return hci_send_cmd(conn->hdev, HCI_OP_DISCONNECT, sizeof(cp), &cp);
 }
 
 static void hci_amp_disconn(struct hci_conn *conn)
@@ -188,21 +210,26 @@ bool hci_setup_sync(struct hci_conn *conn, __u16 handle)
 
 	switch (conn->setting & SCO_AIRMODE_MASK) {
 	case SCO_AIRMODE_TRANSP:
-		if (conn->attempt > ARRAY_SIZE(sco_param_wideband))
+		if (conn->attempt > ARRAY_SIZE(esco_param_msbc))
 			return false;
-		cp.retrans_effort = 0x02;
-		param = &sco_param_wideband[conn->attempt - 1];
+		param = &esco_param_msbc[conn->attempt - 1];
 		break;
 	case SCO_AIRMODE_CVSD:
-		if (conn->attempt > ARRAY_SIZE(sco_param_cvsd))
-			return false;
-		cp.retrans_effort = 0x01;
-		param = &sco_param_cvsd[conn->attempt - 1];
+		if (lmp_esco_capable(conn->link)) {
+			if (conn->attempt > ARRAY_SIZE(esco_param_cvsd))
+				return false;
+			param = &esco_param_cvsd[conn->attempt - 1];
+		} else {
+			if (conn->attempt > ARRAY_SIZE(sco_param_cvsd))
+				return false;
+			param = &sco_param_cvsd[conn->attempt - 1];
+		}
 		break;
 	default:
 		return false;
 	}
 
+	cp.retrans_effort = param->retrans_effort;
 	cp.pkt_type = __cpu_to_le16(param->pkt_type);
 	cp.max_latency = __cpu_to_le16(param->max_latency);
 
@@ -282,7 +309,7 @@ void hci_sco_setup(struct hci_conn *conn, __u8 status)
 		else
 			hci_add_sco(sco, conn->handle);
 	} else {
-		hci_proto_connect_cfm(sco, status);
+		hci_connect_cfm(sco, status);
 		hci_conn_del(sco);
 	}
 }
@@ -325,25 +352,6 @@ static void hci_conn_timeout(struct work_struct *work)
 			hci_amp_disconn(conn);
 		} else {
 			__u8 reason = hci_proto_disconn_ind(conn);
-
-			/* When we are master of an established connection
-			 * and it enters the disconnect timeout, then go
-			 * ahead and try to read the current clock offset.
-			 *
-			 * Processing of the result is done within the
-			 * event handling and hci_clock_offset_evt function.
-			 */
-			if (conn->type == ACL_LINK &&
-			    conn->role == HCI_ROLE_MASTER) {
-				struct hci_dev *hdev = conn->hdev;
-				struct hci_cp_read_clock_offset cp;
-
-				cp.handle = cpu_to_le16(conn->handle);
-
-				hci_send_cmd(hdev, HCI_OP_READ_CLOCK_OFFSET,
-					     sizeof(cp), &cp);
-			}
-
 			hci_disconnect(conn, reason);
 		}
 		break;
@@ -410,7 +418,7 @@ static void le_conn_timeout(struct work_struct *work)
 	 * happen with broken hardware or if low duty cycle was used
 	 * (which doesn't have a timeout of its own).
 	 */
-	if (test_bit(HCI_ADVERTISING, &hdev->dev_flags)) {
+	if (conn->role == HCI_ROLE_SLAVE) {
 		u8 enable = 0x00;
 		hci_send_cmd(hdev, HCI_OP_LE_SET_ADV_ENABLE, sizeof(enable),
 			     &enable);
@@ -443,6 +451,7 @@ struct hci_conn *hci_conn_add(struct hci_dev *hdev, int type, bdaddr_t *dst,
 	conn->io_capability = hdev->io_capability;
 	conn->remote_auth = 0xff;
 	conn->key_type = 0xff;
+	conn->rssi = HCI_RSSI_INVALID;
 	conn->tx_power = HCI_TX_POWER_INVALID;
 	conn->max_tx_power = HCI_TX_POWER_INVALID;
 
@@ -512,7 +521,7 @@ int hci_conn_del(struct hci_conn *conn)
 		/* Unacked frames */
 		hdev->acl_cnt += conn->sent;
 	} else if (conn->type == LE_LINK) {
-		cancel_delayed_work_sync(&conn->le_conn_timeout);
+		cancel_delayed_work(&conn->le_conn_timeout);
 
 		if (hdev->le_pkts)
 			hdev->le_cnt += conn->sent;
@@ -539,6 +548,11 @@ int hci_conn_del(struct hci_conn *conn)
 
 	hci_conn_del_sysfs(conn);
 
+	debugfs_remove_recursive(conn->debugfs);
+
+	if (test_bit(HCI_CONN_PARAM_REMOVAL_PEND, &conn->flags))
+		hci_conn_params_del(conn->hdev, &conn->dst, conn->dst_type);
+
 	hci_dev_put(hdev);
 
 	hci_conn_put(conn);
@@ -557,7 +571,7 @@ struct hci_dev *hci_get_route(bdaddr_t *dst, bdaddr_t *src)
 
 	list_for_each_entry(d, &hci_dev_list, list) {
 		if (!test_bit(HCI_UP, &d->flags) ||
-		    test_bit(HCI_USER_CHANNEL, &d->dev_flags) ||
+		    hci_dev_test_flag(d, HCI_USER_CHANNEL) ||
 		    d->dev_type != HCI_BREDR)
 			continue;
 
@@ -595,6 +609,7 @@ void hci_le_conn_failed(struct hci_conn *conn, u8 status)
 					   conn->dst_type);
 	if (params && params->conn) {
 		hci_conn_drop(params->conn);
+		hci_conn_put(params->conn);
 		params->conn = NULL;
 	}
 
@@ -603,7 +618,7 @@ void hci_le_conn_failed(struct hci_conn *conn, u8 status)
 	mgmt_connect_failed(hdev, &conn->dst, conn->type, conn->dst_type,
 			    status);
 
-	hci_proto_connect_cfm(conn, status);
+	hci_connect_cfm(conn, status);
 
 	hci_conn_del(conn);
 
@@ -618,7 +633,7 @@ void hci_le_conn_failed(struct hci_conn *conn, u8 status)
 	mgmt_reenable_advertising(hdev);
 }
 
-static void create_le_conn_complete(struct hci_dev *hdev, u8 status)
+static void create_le_conn_complete(struct hci_dev *hdev, u8 status, u16 opcode)
 {
 	struct hci_conn *conn;
 
@@ -650,7 +665,7 @@ static void hci_req_add_le_create_conn(struct hci_request *req,
 	memset(&cp, 0, sizeof(cp));
 
 	/* Update random address, but set require_privacy to false so
-	 * that we never connect with an unresolvable address.
+	 * that we never connect with an non-resolvable address.
 	 */
 	if (hci_update_random_address(req, false, &own_addr_type))
 		return;
@@ -685,7 +700,7 @@ static void hci_req_directed_advertising(struct hci_request *req,
 	 * and write a new random address. The flag will be set back on
 	 * as soon as the SET_ADV_ENABLE HCI command completes.
 	 */
-	clear_bit(HCI_LE_ADV, &hdev->dev_flags);
+	hci_dev_clear_flag(hdev, HCI_LE_ADV);
 
 	/* Set require_privacy to false so that the remote device has a
 	 * chance of identifying us.
@@ -717,6 +732,14 @@ struct hci_conn *hci_connect_le(struct hci_dev *hdev, bdaddr_t *dst,
 	struct smp_irk *irk;
 	struct hci_request req;
 	int err;
+
+	/* Let's make sure that le is enabled.*/
+	if (!hci_dev_test_flag(hdev, HCI_LE_ENABLED)) {
+		if (lmp_le_capable(hdev))
+			return ERR_PTR(-ECONNREFUSED);
+
+		return ERR_PTR(-EOPNOTSUPP);
+	}
 
 	/* Some devices send ATT messages as soon as the physical link is
 	 * established. To be able to handle these ATT messages, the user-
@@ -776,7 +799,7 @@ struct hci_conn *hci_connect_le(struct hci_dev *hdev, bdaddr_t *dst,
 	 * anyway have to disable it in order to start directed
 	 * advertising.
 	 */
-	if (test_bit(HCI_LE_ADV, &hdev->dev_flags)) {
+	if (hci_dev_test_flag(hdev, HCI_LE_ADV)) {
 		u8 enable = 0x00;
 		hci_req_add(&req, HCI_OP_LE_SET_ADV_ENABLE, sizeof(enable),
 			    &enable);
@@ -787,7 +810,7 @@ struct hci_conn *hci_connect_le(struct hci_dev *hdev, bdaddr_t *dst,
 		/* If we're active scanning most controllers are unable
 		 * to initiate advertising. Simply reject the attempt.
 		 */
-		if (test_bit(HCI_LE_SCAN, &hdev->dev_flags) &&
+		if (hci_dev_test_flag(hdev, HCI_LE_SCAN) &&
 		    hdev->le_scan_type == LE_SCAN_ACTIVE) {
 			skb_queue_purge(&req.cmd_q);
 			hci_conn_del(conn);
@@ -817,9 +840,9 @@ struct hci_conn *hci_connect_le(struct hci_dev *hdev, bdaddr_t *dst,
 	 * handler for scan disabling knows to set the correct discovery
 	 * state.
 	 */
-	if (test_bit(HCI_LE_SCAN, &hdev->dev_flags)) {
+	if (hci_dev_test_flag(hdev, HCI_LE_SCAN)) {
 		hci_req_add_le_scan_disable(&req);
-		set_bit(HCI_LE_SCAN_INTERRUPTED, &hdev->dev_flags);
+		hci_dev_set_flag(hdev, HCI_LE_SCAN_INTERRUPTED);
 	}
 
 	hci_req_add_le_create_conn(&req, conn);
@@ -841,8 +864,12 @@ struct hci_conn *hci_connect_acl(struct hci_dev *hdev, bdaddr_t *dst,
 {
 	struct hci_conn *acl;
 
-	if (!test_bit(HCI_BREDR_ENABLED, &hdev->dev_flags))
+	if (!hci_dev_test_flag(hdev, HCI_BREDR_ENABLED)) {
+		if (lmp_bredr_capable(hdev))
+			return ERR_PTR(-ECONNREFUSED);
+
 		return ERR_PTR(-EOPNOTSUPP);
+	}
 
 	acl = hci_conn_hash_lookup_ba(hdev, ACL_LINK, dst);
 	if (!acl) {
@@ -915,7 +942,7 @@ int hci_conn_check_link_mode(struct hci_conn *conn)
 	 * Connections is used and the link is encrypted with AES-CCM
 	 * using a P-256 authenticated combination key.
 	 */
-	if (test_bit(HCI_SC_ONLY, &conn->hdev->flags)) {
+	if (hci_dev_test_flag(conn->hdev, HCI_SC_ONLY)) {
 		if (!hci_conn_sc_enabled(conn) ||
 		    !test_bit(HCI_CONN_AES_CCM, &conn->flags) ||
 		    conn->key_type != HCI_LK_AUTH_COMBINATION_P256)
@@ -1069,21 +1096,6 @@ int hci_conn_check_secure(struct hci_conn *conn, __u8 sec_level)
 }
 EXPORT_SYMBOL(hci_conn_check_secure);
 
-/* Change link key */
-int hci_conn_change_link_key(struct hci_conn *conn)
-{
-	BT_DBG("hcon %p", conn);
-
-	if (!test_and_set_bit(HCI_CONN_AUTH_PEND, &conn->flags)) {
-		struct hci_cp_change_conn_link_key cp;
-		cp.handle = cpu_to_le16(conn->handle);
-		hci_send_cmd(conn->hdev, HCI_OP_CHANGE_CONN_LINK_KEY,
-			     sizeof(cp), &cp);
-	}
-
-	return 0;
-}
-
 /* Switch role */
 int hci_conn_switch_role(struct hci_conn *conn, __u8 role)
 {
@@ -1139,7 +1151,7 @@ void hci_conn_hash_flush(struct hci_dev *hdev)
 	list_for_each_entry_safe(c, n, &h->list, list) {
 		c->state = BT_CLOSED;
 
-		hci_proto_disconn_cfm(c, HCI_ERROR_LOCAL_HOST_TERM);
+		hci_disconn_cfm(c, HCI_ERROR_LOCAL_HOST_TERM);
 		hci_conn_del(c);
 	}
 }
@@ -1290,11 +1302,16 @@ struct hci_chan *hci_chan_create(struct hci_conn *conn)
 
 	BT_DBG("%s hcon %p", hdev->name, conn);
 
+	if (test_bit(HCI_CONN_DROP, &conn->flags)) {
+		BT_DBG("Refusing to create new hci_chan");
+		return NULL;
+	}
+
 	chan = kzalloc(sizeof(*chan), GFP_KERNEL);
 	if (!chan)
 		return NULL;
 
-	chan->conn = conn;
+	chan->conn = hci_conn_get(conn);
 	skb_queue_head_init(&chan->data_q);
 	chan->state = BT_CONNECTED;
 
@@ -1314,7 +1331,10 @@ void hci_chan_del(struct hci_chan *chan)
 
 	synchronize_rcu();
 
-	hci_conn_drop(conn);
+	/* Prevent new hci_chan's to be created for this hci_conn */
+	set_bit(HCI_CONN_DROP, &conn->flags);
+
+	hci_conn_put(conn);
 
 	skb_queue_purge(&chan->data_q);
 	kfree(chan);

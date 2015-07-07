@@ -122,7 +122,7 @@ static int sh_pfc_dt_subnode_to_map(struct device *dev, struct device_node *np,
 		return ret;
 	}
 
-	ret = pinconf_generic_parse_dt_config(np, &configs, &num_configs);
+	ret = pinconf_generic_parse_dt_config(np, NULL, &configs, &num_configs);
 	if (ret < 0)
 		return ret;
 
@@ -312,8 +312,8 @@ static int sh_pfc_get_function_groups(struct pinctrl_dev *pctldev,
 	return 0;
 }
 
-static int sh_pfc_func_enable(struct pinctrl_dev *pctldev, unsigned selector,
-			      unsigned group)
+static int sh_pfc_func_set_mux(struct pinctrl_dev *pctldev, unsigned selector,
+			       unsigned group)
 {
 	struct sh_pfc_pinctrl *pmx = pinctrl_dev_get_drvdata(pctldev);
 	struct sh_pfc *pfc = pmx->pfc;
@@ -442,7 +442,7 @@ static const struct pinmux_ops sh_pfc_pinmux_ops = {
 	.get_functions_count	= sh_pfc_get_functions_count,
 	.get_function_name	= sh_pfc_get_function_name,
 	.get_function_groups	= sh_pfc_get_function_groups,
-	.enable			= sh_pfc_func_enable,
+	.set_mux		= sh_pfc_func_set_mux,
 	.gpio_request_enable	= sh_pfc_gpio_request_enable,
 	.gpio_disable_free	= sh_pfc_gpio_disable_free,
 	.gpio_set_direction	= sh_pfc_gpio_set_direction,

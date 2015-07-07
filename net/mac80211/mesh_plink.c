@@ -17,7 +17,7 @@
 #define PLINK_GET_PLID(p) (p + 4)
 
 #define mod_plink_timer(s, t) (mod_timer(&s->plink_timer, \
-				jiffies + HZ * t / 1000))
+				jiffies + msecs_to_jiffies(t)))
 
 enum plink_event {
 	PLINK_UNDEFINED,
@@ -382,6 +382,7 @@ static void mesh_sta_info_init(struct ieee80211_sub_if_data *sdata,
 	enum ieee80211_band band = ieee80211_get_sdata_band(sdata);
 	struct ieee80211_supported_band *sband;
 	u32 rates, basic_rates = 0, changed = 0;
+	enum ieee80211_sta_rx_bandwidth bw = sta->sta.bandwidth;
 
 	sband = local->hw.wiphy->bands[band];
 	rates = ieee80211_sta_get_rates(sdata, elems, band, &basic_rates);
@@ -399,6 +400,9 @@ static void mesh_sta_info_init(struct ieee80211_sub_if_data *sdata,
 
 	if (ieee80211_ht_cap_ie_to_sta_ht_cap(sdata, sband,
 					      elems->ht_cap_elem, sta))
+		changed |= IEEE80211_RC_BW_CHANGED;
+
+	if (bw != sta->sta.bandwidth)
 		changed |= IEEE80211_RC_BW_CHANGED;
 
 	/* HT peer is operating 20MHz-only */
@@ -431,13 +435,11 @@ __mesh_sta_info_alloc(struct ieee80211_sub_if_data *sdata, u8 *hw_addr)
 		return NULL;
 
 	sta->plink_state = NL80211_PLINK_LISTEN;
+	sta->sta.wme = true;
 
 	sta_info_pre_move_state(sta, IEEE80211_STA_AUTH);
 	sta_info_pre_move_state(sta, IEEE80211_STA_ASSOC);
 	sta_info_pre_move_state(sta, IEEE80211_STA_AUTHORIZED);
-
-	set_sta_flag(sta, WLAN_STA_WME);
-	sta->sta.wme = true;
 
 	return sta;
 }
@@ -623,9 +625,9 @@ static void mesh_plink_timer(unsigned long data)
 				    sta->llid, sta->plid, reason);
 }
 
-static inline void mesh_plink_timer_set(struct sta_info *sta, int timeout)
+static inline void mesh_plink_timer_set(struct sta_info *sta, u32 timeout)
 {
-	sta->plink_timer.expires = jiffies + (HZ * timeout / 1000);
+	sta->plink_timer.expires = jiffies + msecs_to_jiffies(timeout);
 	sta->plink_timer.data = (unsigned long) sta;
 	sta->plink_timer.function = mesh_plink_timer;
 	sta->plink_timeout = timeout;
@@ -1004,7 +1006,6 @@ mesh_process_plink_frame(struct ieee80211_sub_if_data *sdata,
 	enum ieee80211_self_protected_actioncode ftype;
 	u32 changed = 0;
 	u8 ie_len = elems->peering_len;
-	__le16 _plid, _llid;
 	u16 plid, llid = 0;
 
 	if (!elems->peering) {
@@ -1039,13 +1040,10 @@ mesh_process_plink_frame(struct ieee80211_sub_if_data *sdata,
 	/* Note the lines below are correct, the llid in the frame is the plid
 	 * from the point of view of this host.
 	 */
-	memcpy(&_plid, PLINK_GET_LLID(elems->peering), sizeof(__le16));
-	plid = le16_to_cpu(_plid);
+	plid = get_unaligned_le16(PLINK_GET_LLID(elems->peering));
 	if (ftype == WLAN_SP_MESH_PEERING_CONFIRM ||
-	    (ftype == WLAN_SP_MESH_PEERING_CLOSE && ie_len == 8)) {
-		memcpy(&_llid, PLINK_GET_PLID(elems->peering), sizeof(__le16));
-		llid = le16_to_cpu(_llid);
-	}
+	    (ftype == WLAN_SP_MESH_PEERING_CLOSE && ie_len == 8))
+		llid = get_unaligned_le16(PLINK_GET_PLID(elems->peering));
 
 	/* WARNING: Only for sta pointer, is dropped & re-acquired */
 	rcu_read_lock();

@@ -623,7 +623,6 @@ int vnt_rf_write_embedded(struct vnt_private *priv, u32 data)
 /* Set Tx power by rate and channel number */
 int vnt_rf_setpower(struct vnt_private *priv, u32 rate, u32 channel)
 {
-	int ret = true;
 	u8 power = priv->cck_pwr;
 
 	if (channel == 0)
@@ -641,6 +640,7 @@ int vnt_rf_setpower(struct vnt_private *priv, u32 rate, u32 channel)
 		break;
 	case RATE_6M:
 	case RATE_9M:
+	case RATE_12M:
 	case RATE_18M:
 	case RATE_24M:
 	case RATE_36M:
@@ -653,9 +653,7 @@ int vnt_rf_setpower(struct vnt_private *priv, u32 rate, u32 channel)
 		break;
 	}
 
-	ret = vnt_rf_set_txpower(priv, power, rate);
-
-	return ret;
+	return vnt_rf_set_txpower(priv, power, rate);
 }
 
 static u8 vnt_rf_addpower(struct vnt_private *priv)

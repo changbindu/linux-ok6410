@@ -266,7 +266,7 @@ static inline void __cache_line_loop(unsigned long paddr, unsigned long vaddr,
  * Machine specific helpers for Entire D-Cache or Per Line ops
  */
 
-static unsigned int __before_dc_op(const int op)
+static inline unsigned int __before_dc_op(const int op)
 {
 	unsigned int reg = reg;
 
@@ -284,7 +284,7 @@ static unsigned int __before_dc_op(const int op)
 	return reg;
 }
 
-static void __after_dc_op(const int op, unsigned int reg)
+static inline void __after_dc_op(const int op, unsigned int reg)
 {
 	if (op & OP_FLUSH)	/* flush / flush-n-inv both wait */
 		while (read_aux_reg(ARC_REG_DC_CTRL) & DC_CTRL_FLUSH_STATUS);
@@ -530,16 +530,9 @@ EXPORT_SYMBOL(dma_cache_wback);
  */
 void flush_icache_range(unsigned long kstart, unsigned long kend)
 {
-	unsigned int tot_sz, off, sz;
-	unsigned long phy, pfn;
+	unsigned int tot_sz;
 
-	/* printk("Kernel Cache Cohenercy: %lx to %lx\n",kstart, kend); */
-
-	/* This is not the right API for user virtual address */
-	if (kstart < TASK_SIZE) {
-		BUG_ON("Flush icache range for user virtual addr space");
-		return;
-	}
+	WARN(kstart < TASK_SIZE, "%s() can't handle user vaddr", __func__);
 
 	/* Shortcut for bigger flush ranges.
 	 * Here we don't care if this was kernel virtual or phy addr
@@ -572,6 +565,9 @@ void flush_icache_range(unsigned long kstart, unsigned long kend)
 	 *     straddles across 2 virtual pages and hence need for loop
 	 */
 	while (tot_sz > 0) {
+		unsigned int off, sz;
+		unsigned long phy, pfn;
+
 		off = kstart % PAGE_SIZE;
 		pfn = vmalloc_to_pfn((void *)kstart);
 		phy = (pfn << PAGE_SHIFT) + off;

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012 Qualcomm Atheros, Inc.
+ * Copyright (c) 2012-2014 Qualcomm Atheros, Inc.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -17,6 +17,7 @@
 #include <linux/module.h>
 #include <linux/pci.h>
 #include <linux/moduleparam.h>
+#include <linux/interrupt.h>
 
 #include "wil6210.h"
 
@@ -30,6 +31,49 @@ static bool debug_fw; /* = false; */
 module_param(debug_fw, bool, S_IRUGO);
 MODULE_PARM_DESC(debug_fw, " load driver if FW not ready. For FW debug");
 
+static
+void wil_set_capabilities(struct wil6210_priv *wil)
+{
+	u32 rev_id = ioread32(wil->csr + HOSTADDR(RGF_USER_JTAG_DEV_ID));
+
+	bitmap_zero(wil->hw_capabilities, hw_capability_last);
+
+	switch (rev_id) {
+	case JTAG_DEV_ID_SPARROW_B0:
+		wil->hw_name = "Sparrow B0";
+		wil->hw_version = HW_VER_SPARROW_B0;
+		break;
+	default:
+		wil_err(wil, "Unknown board hardware 0x%08x\n", rev_id);
+		wil->hw_name = "Unknown";
+		wil->hw_version = HW_VER_UNKNOWN;
+	}
+
+	wil_info(wil, "Board hardware is %s\n", wil->hw_name);
+}
+
+void wil_disable_irq(struct wil6210_priv *wil)
+{
+	int irq = wil->pdev->irq;
+
+	disable_irq(irq);
+	if (wil->n_msi == 3) {
+		disable_irq(irq + 1);
+		disable_irq(irq + 2);
+	}
+}
+
+void wil_enable_irq(struct wil6210_priv *wil)
+{
+	int irq = wil->pdev->irq;
+
+	enable_irq(irq);
+	if (wil->n_msi == 3) {
+		enable_irq(irq + 1);
+		enable_irq(irq + 2);
+	}
+}
+
 /* Bus ops */
 static int wil_if_pcie_enable(struct wil6210_priv *wil)
 {
@@ -40,6 +84,8 @@ static int wil_if_pcie_enable(struct wil6210_priv *wil)
 	 * and only MSI should be used
 	 */
 	int msi_only = pdev->msi_enabled;
+
+	wil_dbg_misc(wil, "%s()\n", __func__);
 
 	pdev->msi_enabled = 0;
 
@@ -85,7 +131,7 @@ static int wil_if_pcie_enable(struct wil6210_priv *wil)
 
 	/* need reset here to obtain MAC */
 	mutex_lock(&wil->mutex);
-	rc = wil_reset(wil);
+	rc = wil_reset(wil, false);
 	mutex_unlock(&wil->mutex);
 	if (debug_fw)
 		rc = 0;
@@ -107,6 +153,8 @@ static int wil_if_pcie_disable(struct wil6210_priv *wil)
 {
 	struct pci_dev *pdev = wil->pdev;
 
+	wil_dbg_misc(wil, "%s()\n", __func__);
+
 	pci_clear_master(pdev);
 	/* disable and release IRQ */
 	wil6210_fini_irq(wil, pdev->irq);
@@ -122,12 +170,11 @@ static int wil_pcie_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	struct wil6210_priv *wil;
 	struct device *dev = &pdev->dev;
 	void __iomem *csr;
-	struct wil_board *board = (struct wil_board *)id->driver_data;
 	int rc;
 
 	/* check HW */
 	dev_info(&pdev->dev, WIL_NAME
-		 " \"%s\" device found [%04x:%04x] (rev %x)\n", board->name,
+		 " device found [%04x:%04x] (rev %x)\n",
 		 (int)pdev->vendor, (int)pdev->device, (int)pdev->revision);
 
 	if (pci_resource_len(pdev, 0) != WIL6210_MEM_SIZE) {
@@ -177,9 +224,12 @@ static int wil_pcie_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 
 	pci_set_drvdata(pdev, wil);
 	wil->pdev = pdev;
-	wil->board = board;
-
+	wil_set_capabilities(wil);
 	wil6210_clear_irq(wil);
+
+	wil->platform_handle =
+			wil_platform_init(&pdev->dev, &wil->platform_ops);
+
 	/* FW should raise IRQ when ready */
 	rc = wil_if_pcie_enable(wil);
 	if (rc) {
@@ -196,14 +246,14 @@ static int wil_pcie_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 
 	wil6210_debugfs_init(wil);
 
-	/* check FW is alive */
-	wmi_echo(wil);
 
 	return 0;
 
  bus_disable:
 	wil_if_pcie_disable(wil);
  if_free:
+	if (wil->platform_ops.uninit)
+		wil->platform_ops.uninit(wil->platform_handle);
 	wil_if_free(wil);
  err_iounmap:
 	pci_iounmap(pdev, csr);
@@ -218,31 +268,24 @@ static int wil_pcie_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 static void wil_pcie_remove(struct pci_dev *pdev)
 {
 	struct wil6210_priv *wil = pci_get_drvdata(pdev);
+	void __iomem *csr = wil->csr;
+
+	wil_dbg_misc(wil, "%s()\n", __func__);
 
 	wil6210_debugfs_remove(wil);
-	wil_if_pcie_disable(wil);
 	wil_if_remove(wil);
+	wil_if_pcie_disable(wil);
+	if (wil->platform_ops.uninit)
+		wil->platform_ops.uninit(wil->platform_handle);
 	wil_if_free(wil);
-	pci_iounmap(pdev, wil->csr);
+	pci_iounmap(pdev, csr);
 	pci_release_region(pdev, 0);
 	pci_disable_device(pdev);
 }
 
-static const struct wil_board wil_board_marlon = {
-	.board = WIL_BOARD_MARLON,
-	.name = "marlon",
-};
-
-static const struct wil_board wil_board_sparrow = {
-	.board = WIL_BOARD_SPARROW,
-	.name = "sparrow",
-};
-
 static const struct pci_device_id wil6210_pcie_ids[] = {
-	{ PCI_DEVICE(0x1ae9, 0x0301),
-	  .driver_data = (kernel_ulong_t)&wil_board_marlon },
-	{ PCI_DEVICE(0x1ae9, 0x0310),
-	  .driver_data = (kernel_ulong_t)&wil_board_sparrow },
+	{ PCI_DEVICE(0x1ae9, 0x0310) },
+	{ PCI_DEVICE(0x1ae9, 0x0302) }, /* same as above, firmware broken */
 	{ /* end: all zeroes */	},
 };
 MODULE_DEVICE_TABLE(pci, wil6210_pcie_ids);

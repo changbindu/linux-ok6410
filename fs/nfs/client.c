@@ -31,7 +31,6 @@
 #include <linux/lockd/bind.h>
 #include <linux/seq_file.h>
 #include <linux/mount.h>
-#include <linux/nfs_idmap.h>
 #include <linux/vfs.h>
 #include <linux/inet.h>
 #include <linux/in6.h>
@@ -433,7 +432,7 @@ static struct nfs_client *nfs_match_client(const struct nfs_client_initdata *dat
 
 static bool nfs_client_init_is_complete(const struct nfs_client *clp)
 {
-	return clp->cl_cons_state != NFS_CS_INITING;
+	return clp->cl_cons_state <= NFS_CS_READY;
 }
 
 int nfs_wait_client_init_complete(const struct nfs_client *clp)
@@ -1252,6 +1251,7 @@ static int nfs_server_list_open(struct inode *inode, struct file *file)
  * set up the iterator to start reading from the server list and return the first item
  */
 static void *nfs_server_list_start(struct seq_file *m, loff_t *_pos)
+				__acquires(&nn->nfs_client_lock)
 {
 	struct nfs_net *nn = net_generic(seq_file_net(m), nfs_net_id);
 
@@ -1274,6 +1274,7 @@ static void *nfs_server_list_next(struct seq_file *p, void *v, loff_t *pos)
  * clean up after reading from the transports list
  */
 static void nfs_server_list_stop(struct seq_file *p, void *v)
+				__releases(&nn->nfs_client_lock)
 {
 	struct nfs_net *nn = net_generic(seq_file_net(p), nfs_net_id);
 
@@ -1318,7 +1319,7 @@ static int nfs_server_list_show(struct seq_file *m, void *v)
  */
 static int nfs_volume_list_open(struct inode *inode, struct file *file)
 {
-	return seq_open_net(inode, file, &nfs_server_list_ops,
+	return seq_open_net(inode, file, &nfs_volume_list_ops,
 			   sizeof(struct seq_net_private));
 }
 
@@ -1326,6 +1327,7 @@ static int nfs_volume_list_open(struct inode *inode, struct file *file)
  * set up the iterator to start reading from the volume list and return the first item
  */
 static void *nfs_volume_list_start(struct seq_file *m, loff_t *_pos)
+				__acquires(&nn->nfs_client_lock)
 {
 	struct nfs_net *nn = net_generic(seq_file_net(m), nfs_net_id);
 
@@ -1348,6 +1350,7 @@ static void *nfs_volume_list_next(struct seq_file *p, void *v, loff_t *pos)
  * clean up after reading from the transports list
  */
 static void nfs_volume_list_stop(struct seq_file *p, void *v)
+				__releases(&nn->nfs_client_lock)
 {
 	struct nfs_net *nn = net_generic(seq_file_net(p), nfs_net_id);
 

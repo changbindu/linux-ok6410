@@ -56,7 +56,6 @@ typedef __uint64_t __psunsigned_t;
 
 #include "kmem.h"
 #include "mrlock.h"
-#include "time.h"
 #include "uuid.h"
 
 #include <linux/semaphore.h>
@@ -117,15 +116,6 @@ typedef __uint64_t __psunsigned_t;
 #undef XFS_NATIVE_HOST
 #endif
 
-/*
- * Feature macros (disable/enable)
- */
-#ifdef CONFIG_SMP
-#define HAVE_PERCPU_SB	/* per cpu superblock counters are a 2.6 feature */
-#else
-#undef  HAVE_PERCPU_SB	/* per cpu superblock counters are a 2.6 feature */
-#endif
-
 #define irix_sgid_inherit	xfs_params.sgid_inherit.val
 #define irix_symlink_mode	xfs_params.symlink_mode.val
 #define xfs_panic_mask		xfs_params.panic_mask.val
@@ -178,6 +168,11 @@ typedef __uint64_t __psunsigned_t;
 #define MIN(a,b)	(min(a,b))
 #define MAX(a,b)	(max(a,b))
 #define howmany(x, y)	(((x)+((y)-1))/(y))
+
+static inline void delay(long ticks)
+{
+	schedule_timeout_uninterruptible(ticks);
+}
 
 /*
  * XFS wrapper structure for sysfs support. It depends on external data
@@ -379,5 +374,11 @@ static inline __uint64_t howmany_64(__uint64_t x, __uint32_t y)
 
 #endif /* XFS_WARN */
 #endif /* DEBUG */
+
+#ifdef CONFIG_XFS_RT
+#define XFS_IS_REALTIME_INODE(ip) ((ip)->i_d.di_flags & XFS_DIFLAG_REALTIME)
+#else
+#define XFS_IS_REALTIME_INODE(ip) (0)
+#endif
 
 #endif /* __XFS_LINUX__ */
