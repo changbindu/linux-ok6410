@@ -7,6 +7,13 @@ Linux kernel for OK6410 development board (http://www.witech.com.cn/product/OK64
 This is a Linux kernel supports for OK6410 ARM development board. This project aims to keep ok6410 board updating with newest version kernel from kernel.org. 
 This project is created for having an embedded platform environment that could verify some changes to latest kernel. It will be very nice if you can join in to help this. 
 
+The board specific code is: arch/arm/mach-s3c64xx/mach-ok6410.c.<br>
+To view what changed(patches) to support ok6410 board, please run below command in source folder:
+
+    $ git log --author=changbin
+
+if you have want a discussion, please send a email to changbin.du@gmail.com or changbin.du@hotmail.com.
+
 #Download and build source
 ##Download kernel source
 You can download the whole source from https://github.com/changbindu/linux-ok6410.git via git
